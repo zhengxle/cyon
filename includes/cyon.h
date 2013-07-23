@@ -32,6 +32,7 @@
 #define STORE_DLEN_OFFSET(b)		((b + sizeof(struct cyon_op) + 4))
 #define STORE_KEY_OFFSET(b)		((b + sizeof(struct cyon_op) + 8))
 #define STORE_DATA_OFFSET(b, s)		((STORE_KEY_OFFSET(b) + s))
+#define CYON_STORE_WRITE_INTERVAL	60000
 
 #define CYON_RESULT_ERROR	0
 #define CYON_RESULT_OK		1

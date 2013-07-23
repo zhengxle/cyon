@@ -69,6 +69,8 @@ cyon_store_init(void)
 		cyon_debug("starting new store");
 		rnode = cyon_malloc(sizeof(struct node));
 		memset(rnode, 0, sizeof(struct node));
+	} else {
+		cyon_debug("store successfully loaded from disk");
 	}
 }
 
@@ -100,12 +102,12 @@ cyon_store_get(u_int8_t *key, u_int32_t len, u_int8_t **out, u_int32_t *olen)
 
 	*out = NULL;
 	if (p->hasdata == 0)
-		return (0);
+		return (CYON_RESULT_ERROR);
 
 	*out = cyon_malloc(*(u_int32_t *)p->region);
 	memcpy(*out, p->region + sizeof(u_int32_t), *(u_int32_t *)p->region);
 
-	return (1);
+	return (CYON_RESULT_OK);
 }
 
 int
@@ -410,7 +412,6 @@ cyon_store_map(void)
 		return (CYON_RESULT_ERROR);
 	}
 
-	cyon_debug("store loaded");
 	return (CYON_RESULT_OK);
 }
 

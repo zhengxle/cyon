@@ -53,14 +53,14 @@ main(int argc, char *argv[])
 	sig_recv = 0;
 	signal(SIGQUIT, cyon_signal);
 
-	lastwrite = now = 0;
+	lastwrite = cyon_time_ms();
 	cyon_debug("cyond: ready");
 	for (;;) {
 		if (sig_recv == SIGQUIT)
 			break;
 
 		now = cyon_time_ms();
-		if ((now - lastwrite) > 5000) {
+		if ((now - lastwrite) >= CYON_STORE_WRITE_INTERVAL) {
 			lastwrite = now;
 			if (!cyon_store_write())
 				cyon_debug("could not write store");
