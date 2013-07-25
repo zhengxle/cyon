@@ -60,8 +60,12 @@ void		fatal(const char *, ...);
 /* Server stuff only. */
 #if defined(CYON_SERVER)
 
+#if defined(DEBUG)
 #define cyon_debug(fmt, ...)		\
 	cyon_debug_internal(__FILE__, __LINE__, fmt, ##__VA_ARGS__)
+#else
+#define cyon_debug(fmt, ...)
+#endif
 
 #define STORE_KLEN_OFFSET(b)		((b + sizeof(struct cyon_op)))
 #define STORE_DLEN_OFFSET(b)		((b + sizeof(struct cyon_op) + 4))
