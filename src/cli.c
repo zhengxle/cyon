@@ -199,25 +199,32 @@ cyon_ssl_read(void *dst, u_int32_t len)
 int
 cyon_add(u_int8_t *key, u_int32_t klen, u_int8_t *d, u_int32_t dlen)
 {
-	struct cyon_op		op;
-	u_int8_t		p[8];
-	u_int32_t		flen;
+	u_int8_t		*p;
+	struct cyon_op		*op, ret;
+	u_int32_t		len, flen, off;
 
 	flen = sizeof(klen) + sizeof(dlen) + klen + dlen;
-	net_write32((u_int8_t *)&(op.length), flen);
+	len = flen + sizeof(struct cyon_op);
 
-	net_write32(&p[0], klen);
-	net_write32(&p[4], dlen);
+	if ((p = malloc(len)) == NULL)
+		fatal("malloc(): %d", errno_s);
 
-	op.op = CYON_OP_PUT;
-	cyon_ssl_write(&op, sizeof(op));
-	cyon_ssl_write(p, sizeof(p));
-	cyon_ssl_write(key, klen);
-	cyon_ssl_write(d, dlen);
+	op = (struct cyon_op *)p;
+	op->op = CYON_OP_PUT;
+	net_write32((u_int8_t *)&(op->length), flen);
 
-	memset(&op, 0, sizeof(op));
-	cyon_ssl_read(&op, sizeof(op));
-	if (op.op == CYON_OP_RESULT_OK)
+	off = sizeof(struct cyon_op);
+	net_write32(&p[off], klen);
+	net_write32(&p[off + 4], dlen);
+	memcpy(&p[off + 8], key, klen);
+	memcpy(&p[off + 8 + klen], d, dlen);
+
+	cyon_ssl_write(p, len);
+	free(p);
+
+	memset(&ret, 0, sizeof(ret));
+	cyon_ssl_read(&ret, sizeof(ret));
+	if (ret.op == CYON_OP_RESULT_OK)
 		return (1);
 
 	return (0);
@@ -294,7 +301,10 @@ cyon_cli_put(u_int8_t argc, char **argv)
 		return;
 	}
 
-	cyon_add((u_int8_t *)argv[1], strlen(argv[1]), d, st.st_size);
+	if (cyon_add((u_int8_t *)argv[1], strlen(argv[1]), d, st.st_size))
+		printf("Key was added successfully.\n");
+	else
+		printf("The key was not added successfully.\n");
 
 	free(d);
 	close(fd);
