@@ -28,25 +28,53 @@
 
 #include <errno.h>
 
-#define STORE_KLEN_OFFSET(b)		((b + sizeof(struct cyon_op)))
-#define STORE_DLEN_OFFSET(b)		((b + sizeof(struct cyon_op) + 4))
-#define STORE_KEY_OFFSET(b)		((b + sizeof(struct cyon_op) + 8))
-#define STORE_DATA_OFFSET(b, s)		((STORE_KEY_OFFSET(b) + s))
-#define CYON_STORE_WRITE_INTERVAL	60000
+/* Shared server & cli stuff. */
+#define CYON_OP_PUT		1
+#define CYON_OP_GET		2
+#define CYON_OP_WRITE		3
+#define CYON_OP_STATS		4
+#define CYON_OP_RESULT_OK	200
+#define CYON_OP_RESULT_ERROR	201
+
+struct cyon_op {
+	u_int8_t		op;
+	u_int32_t		length;
+};
+
+struct cyon_stats {
+	u_int32_t		meminuse;
+	u_int64_t		keycount;
+};
 
 #define CYON_RESULT_ERROR	0
 #define CYON_RESULT_OK		1
 #define errno_s			strerror(errno)
 #define ssl_errno_s		ERR_error_string(ERR_get_error(), NULL)
 
+u_int16_t	net_read16(u_int8_t *);
+u_int32_t	net_read32(u_int8_t *);
+void		net_write16(u_int8_t *, u_int16_t);
+void		net_write32(u_int8_t *, u_int32_t);
+void		fatal(const char *, ...);
+
+/* Server stuff only. */
+#if defined(CYON_SERVER)
+
 #define cyon_debug(fmt, ...)		\
 	cyon_debug_internal(__FILE__, __LINE__, fmt, ##__VA_ARGS__)
+
+#define STORE_KLEN_OFFSET(b)		((b + sizeof(struct cyon_op)))
+#define STORE_DLEN_OFFSET(b)		((b + sizeof(struct cyon_op) + 4))
+#define STORE_KEY_OFFSET(b)		((b + sizeof(struct cyon_op) + 8))
+#define STORE_DATA_OFFSET(b, s)		((STORE_KEY_OFFSET(b) + s))
+#define CYON_STORE_WRITE_INTERVAL	60000
 
 #define NETBUF_RECV		0
 #define NETBUF_SEND		1
 
-#define NETBUF_CALL_CB_ALWAYS	0x01
-#define NETBUF_FORCE_REMOVE	0x02
+#define NETBUF_CALL_CB_ALWAYS		0x01
+#define NETBUF_FORCE_REMOVE		0x02
+#define NETBUF_USE_DATA_DIRECT		0x04
 
 struct netbuf {
 	u_int8_t		*buf;
@@ -89,19 +117,13 @@ struct connection {
 	TAILQ_ENTRY(connection)	list;
 };
 
-#define CYON_OP_PUT		1
-#define CYON_OP_GET		2
-
-struct cyon_op {
-	u_int8_t		op;
-	u_int32_t		length;
-};
-
 extern struct listener		server;
 extern SSL_CTX			*ssl_ctx;
+extern u_int32_t		meminuse;
+extern u_int64_t		key_count;
+extern u_int64_t		last_store_write;
 
 u_int64_t	cyon_time_ms(void);
-void		fatal(const char *, ...);
 void		cyon_strlcpy(char *, const char *, size_t);
 void		cyon_debug_internal(char *, int, const char *, ...);
 
@@ -137,14 +159,11 @@ int		net_recv(struct connection *);
 int		net_send_flush(struct connection *);
 int		net_recv_flush(struct connection *);
 
-u_int16_t	net_read16(u_int8_t *);
-u_int32_t	net_read32(u_int8_t *);
-void		net_write16(u_int8_t *, u_int16_t);
-void		net_write32(u_int8_t *, u_int32_t);
-
 void		cyon_store_init(void);
 int		cyon_store_write(void);
 int		cyon_store_put(u_int8_t *, u_int32_t, u_int8_t *, u_int32_t);
 int		cyon_store_get(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);
+
+#endif /* CYON_SERVER */
 
 #endif /* !_H_CYON_H */

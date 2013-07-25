@@ -31,8 +31,12 @@ net_send_queue(struct connection *c, u_int8_t *data, size_t len, int flags,
 	nb->type = NETBUF_SEND;
 
 	if (len > 0) {
-		nb->buf = (u_int8_t *)cyon_malloc(nb->len);
-		memcpy(nb->buf, data, nb->len);
+		if (flags & NETBUF_USE_DATA_DIRECT) {
+			nb->buf = data;
+		} else {
+			nb->buf = (u_int8_t *)cyon_malloc(nb->len);
+			memcpy(nb->buf, data, nb->len);
+		}
 	} else {
 		nb->buf = NULL;
 	}
@@ -123,7 +127,8 @@ net_send(struct connection *c)
 				r = CYON_RESULT_OK;
 
 			if (nb->offset == nb->len) {
-				if (nb->buf != NULL)
+				if (nb->buf != NULL &&
+				    !(nb->flags & NETBUF_USE_DATA_DIRECT))
 					cyon_mem_free(nb->buf);
 				cyon_mem_free(nb);
 			}
@@ -212,40 +217,4 @@ net_recv_flush(struct connection *c)
 	}
 
 	return (CYON_RESULT_OK);
-}
-
-u_int16_t
-net_read16(u_int8_t *b)
-{
-	u_int16_t	r;
-
-	r = *(u_int16_t *)b;
-	return (ntohs(r));
-}
-
-u_int32_t
-net_read32(u_int8_t *b)
-{
-	u_int32_t	r;
-
-	r = *(u_int32_t *)b;
-	return (ntohl(r));
-}
-
-void
-net_write16(u_int8_t *p, u_int16_t n)
-{
-	u_int16_t	r;
-
-	r = htons(n);
-	memcpy(p, &r, sizeof(r));
-}
-
-void
-net_write32(u_int8_t *p, u_int32_t n)
-{
-	u_int32_t	r;
-
-	r = htonl(n);
-	memcpy(p, &r, sizeof(r));
 }

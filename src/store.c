@@ -41,10 +41,13 @@
 #define CYON_STORE_PATH			"cyon.store"
 #define CYON_STORE_TMPPATH		"cyon.store.tmp"
 
+#define NODE_FLAG_HASDATA		0x01
+#define NODE_FLAG_DELETED		0x02
+
 struct node {
 	u_int8_t	rbase;
 	u_int8_t	rtop;
-	u_int8_t	hasdata;
+	u_int8_t	flags;
 	u_int8_t	*region;
 } __attribute__((__packed__));
 
@@ -55,12 +58,15 @@ static int	cyon_store_mapnode(int, struct node *);
 static int	cyon_store_writenode(int, struct node *,
 		    u_int8_t *, u_int32_t, u_int32_t, u_int32_t *);
 
+u_int64_t		key_count;
+
 static struct node	*rnode;
 static SHA256_CTX	sha256ctx;
 
 void
 cyon_store_init(void)
 {
+	key_count = 0;
 	rnode = NULL;
 	if (!cyon_store_map())
 		fatal("could not load store file");
@@ -70,7 +76,7 @@ cyon_store_init(void)
 		rnode = cyon_malloc(sizeof(struct node));
 		memset(rnode, 0, sizeof(struct node));
 	} else {
-		cyon_debug("store successfully loaded from disk");
+		cyon_debug("store loaded from disk: %ld keys", key_count);
 	}
 }
 
@@ -91,7 +97,7 @@ cyon_store_get(u_int8_t *key, u_int32_t len, u_int8_t **out, u_int32_t *olen)
 		if (idx < p->rbase || idx > p->rtop)
 			break;
 
-		if (p->hasdata)
+		if (p->flags & NODE_FLAG_HASDATA)
 			rlen = sizeof(u_int32_t) + *(u_int32_t *)p->region;
 		else
 			rlen = 0;
@@ -101,11 +107,11 @@ cyon_store_get(u_int8_t *key, u_int32_t len, u_int8_t **out, u_int32_t *olen)
 	}
 
 	*out = NULL;
-	if (p->hasdata == 0)
+	if (!(p->flags & NODE_FLAG_HASDATA) || (p->flags & NODE_FLAG_DELETED))
 		return (CYON_RESULT_ERROR);
 
-	*out = cyon_malloc(*(u_int32_t *)p->region);
-	memcpy(*out, p->region + sizeof(u_int32_t), *(u_int32_t *)p->region);
+	*olen = *(u_int32_t *)p->region;
+	*out = p->region + sizeof(u_int32_t);
 
 	return (CYON_RESULT_OK);
 }
@@ -123,9 +129,9 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 	for (i = 0; i < len; i++) {
 		idx = key[i];
 		if (p->region == NULL) {
+			p->flags = 0;
 			p->rtop = idx;
 			p->rbase = idx;
-			p->hasdata = 0;
 			p->region = cyon_malloc(sizeof(struct node));
 			memset(p->region, 0, sizeof(struct node));
 		}
@@ -134,7 +140,7 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 			p->rtop = idx;
 			p->rbase = idx;
 
-			if (p->hasdata) {
+			if (p->flags & NODE_FLAG_HASDATA) {
 				old = p->region;
 				offset = sizeof(u_int32_t) + *(u_int32_t *)old;
 				rlen = offset + sizeof(struct node);
@@ -145,11 +151,11 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 
 			p->region = cyon_malloc(rlen);
 
-			if (p->hasdata)
+			if (p->flags & NODE_FLAG_HASDATA)
 				memcpy(p->region, old, offset);
 			memset(p->region + offset, 0, sizeof(struct node));
 
-			if (p->hasdata)
+			if (p->flags & NODE_FLAG_HASDATA)
 				cyon_mem_free(old);
 		}
 
@@ -165,7 +171,7 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 				base = 0;
 			}
 
-			if (p->hasdata) {
+			if (p->flags & NODE_FLAG_HASDATA) {
 				offset = sizeof(u_int32_t) +
 				    *(u_int32_t *)p->region;
 			} else {
@@ -186,7 +192,7 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 			cyon_mem_free(old);
 		}
 
-		if (p->hasdata)
+		if (p->flags & NODE_FLAG_HASDATA)
 			offset = sizeof(u_int32_t) + *(u_int32_t *)p->region;
 		else
 			offset = 0;
@@ -195,8 +201,10 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 		    ((idx - p->rbase) * sizeof(struct node)));
 	}
 
-	if (p->hasdata)
+	if (p->flags & NODE_FLAG_HASDATA) {
+		cyon_debug("key already exists");
 		return (CYON_RESULT_ERROR);
+	}
 
 	old = p->region;
 
@@ -208,7 +216,7 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 		rlen = dlen;
 	}
 
-	p->hasdata = 1;
+	p->flags = NODE_FLAG_HASDATA;
 	rlen += sizeof(u_int32_t);
 
 	p->region = cyon_malloc(rlen);
@@ -221,6 +229,8 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 		memcpy(p->region + offset, old, olen);
 		cyon_mem_free(old);
 	}
+
+	key_count++;
 
 	return (CYON_RESULT_OK);
 }
@@ -308,7 +318,7 @@ cyon_store_writenode(int fd, struct node *p, u_int8_t *buf, u_int32_t blen,
 	struct node		*np;
 	u_int32_t		offset, i, rlen;
 
-	if (p->hasdata)
+	if (p->flags & NODE_FLAG_HASDATA)
 		offset = sizeof(u_int32_t) + *(u_int32_t *)p->region;
 	else
 		offset = 0;
@@ -428,10 +438,12 @@ cyon_store_mapnode(int fd, struct node *p)
 	}
 
 	p->region = NULL;
-	if (p->hasdata == 0 && p->rbase == 0 && p->rtop == 0)
+	if (!(p->flags & NODE_FLAG_HASDATA) && p->rbase == 0 && p->rtop == 0)
 		return (CYON_RESULT_OK);
 
-	if (p->hasdata) {
+	if (p->flags & NODE_FLAG_HASDATA) {
+		key_count++;
+
 		if (!cyon_atomic_read(fd, &offset,
 		    sizeof(u_int32_t), CYON_ADD_CHECKSUM))
 			return (CYON_RESULT_ERROR);

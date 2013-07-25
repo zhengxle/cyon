@@ -1,34 +1,34 @@
 # Cyon Makefile
 
 CC=gcc
-BIN=cyon-server
-C_BIN=cyon-client
 
 S_SRC=	src/cyon.c src/connection.c src/net.c src/mem.c \
-	src/store.c src/utils.c src/linux.c
+	src/shared.c src/store.c src/utils.c src/linux.c
 S_OBJS=	$(S_SRC:.c=.o)
 
-C_SRC=	src/client.c
+C_SRC=	src/cli.c src/shared.c
 C_OBJS=	$(C_SRC:.c=.o)
 
 CFLAGS+=-Wall -Wstrict-prototypes -Wmissing-prototypes
 CFLAGS+=-Wmissing-declarations -Wshadow -Wpointer-arith -Wcast-qual
 CFLAGS+=-Wsign-compare -Iincludes -g
-LDFLAGS=-lssl -lcrypto
+LDFLAGS+=-lssl -lcrypto
 
 all:
-	make clean
 	make cyon-server
-	make cyon-client
+	make cyon-cli
 
-cyon-server: $(S_OBJS)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(S_OBJS) -o $(BIN)
+cyon-server: $(S_SRC)
+	@CFLAGS="-DCYON_SERVER=1" OBJS="$(S_OBJS)" BIN=cyon-server make generic
 
-cyon-client: $(C_OBJS)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(C_OBJS) -o $(C_BIN)
+cyon-cli: $(C_SRC)
+	@BIN="cyon-cli" OBJS="$(C_OBJS)" make generic
+
+generic: $(OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) -o $(BIN)
 
 .c.o: $<
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f src/*.o $(BIN) $(C_BIN)
+	rm -f src/*.o cyon-server cyon-cli

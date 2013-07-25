@@ -33,6 +33,7 @@ volatile sig_atomic_t	sig_recv;
 
 struct listener		server;
 SSL_CTX			*ssl_ctx = NULL;
+u_int64_t		last_store_write;
 
 static void		cyon_signal(int);
 static void		cyon_ssl_init(void);
@@ -41,7 +42,7 @@ static void		cyon_server_bind(struct listener *, char *, u_int16_t);
 int
 main(int argc, char *argv[])
 {
-	u_int64_t	lastwrite, now;
+	u_int64_t	now;
 
 	cyon_mem_init();
 	cyon_ssl_init();
@@ -53,15 +54,15 @@ main(int argc, char *argv[])
 	sig_recv = 0;
 	signal(SIGQUIT, cyon_signal);
 
-	lastwrite = cyon_time_ms();
+	last_store_write = cyon_time_ms();
 	cyon_debug("cyond: ready");
 	for (;;) {
 		if (sig_recv == SIGQUIT)
 			break;
 
 		now = cyon_time_ms();
-		if ((now - lastwrite) >= CYON_STORE_WRITE_INTERVAL) {
-			lastwrite = now;
+		if ((now - last_store_write) >= CYON_STORE_WRITE_INTERVAL) {
+			last_store_write = now;
 			if (!cyon_store_write())
 				cyon_debug("could not write store");
 			else

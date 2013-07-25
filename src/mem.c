@@ -28,17 +28,14 @@
 
 struct meminfo {
 	u_int16_t		magic;
-	TAILQ_ENTRY(meminfo)	list;
 } __attribute__((__packed__));
 
 u_int32_t			meminuse;
-TAILQ_HEAD(, meminfo)		memused;
 
 void
 cyon_mem_init(void)
 {
 	meminuse = 0;
-	TAILQ_INIT(&memused);
 }
 
 void *
@@ -60,7 +57,6 @@ cyon_malloc(size_t len)
 
 	mem = CYON_MEMINFO(addr);
 	mem->magic = CYON_MEM_MAGIC;
-	TAILQ_INSERT_TAIL(&memused, mem, list);
 
 	meminuse += len;
 
@@ -105,7 +101,6 @@ cyon_mem_free(void *ptr)
 		fatal("cyon_mem_free(): magic boundary not found");
 
 	meminuse -= CYON_MEMSIZE(ptr);
-	TAILQ_REMOVE(&memused, mem, list);
 
 	addr = (u_int8_t *)ptr - sizeof(u_int32_t);
 	free(addr);

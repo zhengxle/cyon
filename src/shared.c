@@ -14,15 +14,46 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <sys/param.h>
-#include <sys/time.h>
-
-#include <unistd.h>
-
 #include "cyon.h"
 
+u_int16_t
+net_read16(u_int8_t *b)
+{
+	u_int16_t	r;
+
+	r = *(u_int16_t *)b;
+	return (ntohs(r));
+}
+
+u_int32_t
+net_read32(u_int8_t *b)
+{
+	u_int32_t	r;
+
+	r = *(u_int32_t *)b;
+	return (ntohl(r));
+}
+
 void
-cyon_debug_internal(char *file, int line, const char *fmt, ...)
+net_write16(u_int8_t *p, u_int16_t n)
+{
+	u_int16_t	r;
+
+	r = htons(n);
+	memcpy(p, &r, sizeof(r));
+}
+
+void
+net_write32(u_int8_t *p, u_int32_t n)
+{
+	u_int32_t	r;
+
+	r = htonl(n);
+	memcpy(p, &r, sizeof(r));
+}
+
+void
+fatal(const char *fmt, ...)
 {
 	va_list		args;
 	char		buf[2048];
@@ -31,30 +62,7 @@ cyon_debug_internal(char *file, int line, const char *fmt, ...)
 	vsnprintf(buf, sizeof(buf), fmt, args);
 	va_end(args);
 
-	printf("%s:%d - %s\n", file, line, buf);
+	printf("cyon: %s\n", buf);
+	exit(1);
 }
 
-void
-cyon_strlcpy(char *dst, const char *src, size_t len)
-{
-	char		*d = dst;
-	const char	*s = src;
-
-	while ((*d++ = *s++) != '\0') {
-		if (d == (dst + len - 1)) {
-			*d = '\0';
-			break;
-		}
-	}
-}
-
-u_int64_t
-cyon_time_ms(void)
-{
-	struct timeval		tv;
-
-	if (gettimeofday(&tv, NULL) == -1)
-		return (0);
-
-	return (tv.tv_sec * 1000 + (tv.tv_usec / 1000));
-}

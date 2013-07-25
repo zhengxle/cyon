@@ -17,6 +17,7 @@
 #include <sys/param.h>
 #include <sys/socket.h>
 
+#include <endian.h>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -24,6 +25,9 @@
 
 static int		cyon_connection_recv_op(struct netbuf *);
 static int		cyon_connection_recv_put(struct netbuf *);
+static int		cyon_connection_recv_get(struct netbuf *);
+static void		cyon_connection_recv_stats(struct connection *);
+static void		cyon_connection_recv_write(struct connection *);
 
 static TAILQ_HEAD(, connection)		disconnected;
 static TAILQ_HEAD(, connection)		clients;
@@ -225,11 +229,23 @@ cyon_connection_recv_op(struct netbuf *nb)
 		r = net_recv_expand(c, nb, len, cyon_connection_recv_put);
 		break;
 	case CYON_OP_GET:
+		r = net_recv_expand(c, nb, len, cyon_connection_recv_get);
+		break;
+	case CYON_OP_WRITE:
+		r = CYON_RESULT_OK;
+		cyon_connection_recv_write(c);
+		break;
+	case CYON_OP_STATS:
+		r = CYON_RESULT_OK;
+		cyon_connection_recv_stats(c);
 		break;
 	default:
 		cyon_debug("unknown cyon_op %d", op->op);
 		break;
 	}
+
+	net_recv_queue(c, sizeof(struct cyon_op), 0,
+	    NULL, cyon_connection_recv_op);
 
 	return (r);
 }
@@ -237,8 +253,10 @@ cyon_connection_recv_op(struct netbuf *nb)
 static int
 cyon_connection_recv_put(struct netbuf *nb)
 {
-	u_int8_t		*key, *data;
+	struct cyon_op		ret;
 	u_int32_t		dlen, klen;
+	u_int8_t		*key, *data;
+	struct connection	*c = (struct connection *)nb->owner;
 
 	klen = net_read32(nb->buf + sizeof(struct cyon_op));
 	dlen = net_read32(nb->buf + sizeof(struct cyon_op) + sizeof(u_int32_t));
@@ -246,5 +264,73 @@ cyon_connection_recv_put(struct netbuf *nb)
 	key = nb->buf + sizeof(struct cyon_op) + (sizeof(u_int32_t) * 2);
 	data = key + klen;
 
-	return (cyon_store_put(key, klen, data, dlen));
+	if (cyon_store_put(key, klen, data, dlen))
+		ret.op = CYON_OP_RESULT_OK;
+	else
+		ret.op = CYON_OP_RESULT_ERROR;
+
+	ret.length = 0;
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
+
+	return (CYON_RESULT_OK);
+}
+
+static int
+cyon_connection_recv_get(struct netbuf *nb)
+{
+	struct cyon_op		ret, *op;
+	u_int32_t		klen, dlen;
+	u_int8_t		*key, *data;
+	struct connection	*c = (struct connection *)nb->owner;
+
+	op = (struct cyon_op *)nb->buf;
+	klen = net_read32((u_int8_t *)&(op->length));
+	key = nb->buf + sizeof(struct cyon_op);
+
+	if (cyon_store_get(key, klen, &data, &dlen)) {
+		ret.op = CYON_OP_RESULT_OK;
+		net_write32((u_int8_t *)&(ret.length), dlen);
+
+		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
+		net_send_queue(c, data, dlen,
+		    NETBUF_USE_DATA_DIRECT, NULL, NULL);
+	} else {
+		ret.op = CYON_OP_RESULT_ERROR;
+		net_write32((u_int8_t *)&(ret.length), 0);
+		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
+	}
+
+	return (CYON_RESULT_OK);
+}
+
+static void
+cyon_connection_recv_write(struct connection *c)
+{
+	struct cyon_op		ret;
+
+	last_store_write = cyon_time_ms();
+	net_write32((u_int8_t *)&(ret.length), 0);
+
+	if (cyon_store_write())
+		ret.op = CYON_OP_RESULT_OK;
+	else
+		ret.op = CYON_OP_RESULT_ERROR;
+
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
+}
+
+static void
+cyon_connection_recv_stats(struct connection *c)
+{
+	struct cyon_op		ret;
+	struct cyon_stats	stats;
+
+	ret.op = CYON_OP_RESULT_OK;
+	net_write32((u_int8_t *)&(ret.length), sizeof(struct cyon_stats));
+
+	stats.keycount = htobe64(key_count);
+	net_write32((u_int8_t *)&(stats.meminuse), meminuse);
+
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
+	net_send_queue(c, (u_int8_t *)&stats, sizeof(stats), 0, NULL, NULL);
 }
