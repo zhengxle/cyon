@@ -58,7 +58,7 @@ cyon_malloc(size_t len)
 	mem = CYON_MEMINFO(addr);
 	mem->magic = CYON_MEM_MAGIC;
 
-	meminuse += len;
+	meminuse += mlen;
 
 	return (addr);
 }
@@ -100,7 +100,8 @@ cyon_mem_free(void *ptr)
 	if (mem->magic != CYON_MEM_MAGIC)
 		fatal("cyon_mem_free(): magic boundary not found");
 
-	meminuse -= CYON_MEMSIZE(ptr);
+	meminuse -= CYON_MEMSIZE(ptr) -
+	    sizeof(struct meminfo) - sizeof(u_int32_t);
 
 	addr = (u_int8_t *)ptr - sizeof(u_int32_t);
 	free(addr);
