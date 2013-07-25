@@ -17,9 +17,12 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 
+#include <netinet/tcp.h>
+
 #include <endian.h>
 #include <fcntl.h>
 #include <stdarg.h>
+#include <stdlib.h>
 #include <signal.h>
 #include <unistd.h>
 
@@ -32,14 +35,15 @@ void		cyon_disconnect(void);
 void		fatal(const char *, ...);
 void		cyon_ssl_write(void *, u_int32_t);
 void		cyon_ssl_read(void *, u_int32_t);
-void		cyon_add(u_int8_t *, u_int32_t, u_int8_t *, u_int32_t);
-void		cyon_get(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);
+int		cyon_add(u_int8_t *, u_int32_t, u_int8_t *, u_int32_t);
+int		cyon_get(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);
 
 void		cyon_cli_put(u_int8_t, char **);
 void		cyon_cli_get(u_int8_t, char **);
 void		cyon_cli_quit(u_int8_t, char **);
 void		cyon_cli_stats(u_int8_t, char **);
 void		cyon_cli_write(u_int8_t, char **);
+void		cyon_cli_stress_server(u_int8_t, char **);
 
 int		quit = 0;
 int		cfd = -1;
@@ -51,11 +55,12 @@ struct {
 	char		*cmd;
 	void		(*cb)(u_int8_t, char **);
 } cmds[] = {
-	{ "quit",	cyon_cli_quit },
-	{ "put",	cyon_cli_put },
-	{ "get",	cyon_cli_get },
-	{ "write",	cyon_cli_write },
-	{ "stats",	cyon_cli_stats },
+	{ "quit",		cyon_cli_quit },
+	{ "put",		cyon_cli_put },
+	{ "get",		cyon_cli_get },
+	{ "write",		cyon_cli_write },
+	{ "stats",		cyon_cli_stats },
+	{ "stress-server",	cyon_cli_stress_server },
 	{ NULL,		NULL },
 };
 
@@ -151,10 +156,15 @@ cyon_ssl_init(void)
 void
 cyon_connect(void)
 {
+	int			on;
 	struct sockaddr_in	sin;
 
 	if ((cfd = socket(AF_INET, SOCK_STREAM, 0)) == -1)
 		fatal("socket(): %s", errno_s);
+
+	on = 1;
+	if (setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on)) == -1)
+		fatal("setsockopt(): %d", errno_s);
 
 	memset(&sin, 0, sizeof(sin));
 	sin.sin_family = AF_INET;
@@ -186,7 +196,7 @@ cyon_ssl_read(void *dst, u_int32_t len)
 		fatal("SSL_read(): %s", ssl_errno_s);
 }
 
-void
+int
 cyon_add(u_int8_t *key, u_int32_t klen, u_int8_t *d, u_int32_t dlen)
 {
 	struct cyon_op		op;
@@ -208,12 +218,12 @@ cyon_add(u_int8_t *key, u_int32_t klen, u_int8_t *d, u_int32_t dlen)
 	memset(&op, 0, sizeof(op));
 	cyon_ssl_read(&op, sizeof(op));
 	if (op.op == CYON_OP_RESULT_OK)
-		printf("The key was successfully added.\n");
-	else
-		printf("An error occured while adding the key.\n");
+		return (1);
+
+	return (0);
 }
 
-void
+int
 cyon_get(u_int8_t *key, u_int32_t klen, u_int8_t **out, u_int32_t *dlen)
 {
 	struct cyon_op		op;
@@ -236,6 +246,8 @@ cyon_get(u_int8_t *key, u_int32_t klen, u_int8_t **out, u_int32_t *dlen)
 		*dlen = 0;
 		*out = NULL;
 	}
+
+	return (*out != NULL);
 }
 
 void
@@ -301,8 +313,7 @@ cyon_cli_get(u_int8_t argc, char **argv)
 		return;
 	}
 
-	cyon_get((u_int8_t *)argv[1], strlen(argv[1]), &data, &dlen);
-	if (data != NULL) {
+	if (cyon_get((u_int8_t *)argv[1], strlen(argv[1]), &data, &dlen)) {
 		printf("Received %d bytes of data\n", dlen);
 
 		fd = open(argv[2], O_CREAT | O_TRUNC | O_WRONLY, 0700);
@@ -364,4 +375,26 @@ cyon_cli_stats(u_int8_t argc, char **argv)
 
 	printf("Memory in use:    %d bytes\n", stats.meminuse);
 	printf("Keys in store:    %ld\n", stats.keycount);
+}
+
+void
+cyon_cli_stress_server(u_int8_t argc, char **argv)
+{
+	u_int32_t	i;
+	char		key[8];
+
+	printf("Inserting a million keys, hang on...\n");
+
+	for (i = 0; i < 1000000; i++) {
+		snprintf(key, sizeof(key), "%d", i);
+
+		if (!cyon_add((u_int8_t *)key, strlen(key),
+		    (u_int8_t *)"Cyon server stress test",
+		    strlen("Cyon server stress test"))) {
+			printf("Error inserting '%s'\n", key);
+			break;
+		}
+	}
+
+	printf("Inserted %d/1000000 keys\n", i);
 }
