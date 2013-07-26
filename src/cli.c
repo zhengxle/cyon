@@ -20,6 +20,7 @@
 #include <openssl/sha.h>
 
 #include <endian.h>
+#include <netdb.h>
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -49,7 +50,7 @@ void		cyon_cli_setauth(u_int8_t, char **);
 
 int		quit = 0;
 int		cfd = -1;
-char		*ip = NULL;
+char		*host = NULL;
 SSL		*ssl = NULL;
 SSL_CTX		*ssl_ctx = NULL;
 
@@ -94,7 +95,7 @@ main(int argc, char *argv[])
 			authpwd = 1;
 			break;
 		case 's':
-			ip = optarg;
+			host = optarg;
 			break;
 		default:
 			usage();
@@ -105,7 +106,7 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (ip == NULL)
+	if (host == NULL)
 		usage();
 
 	cyon_connect();
@@ -168,7 +169,7 @@ main(int argc, char *argv[])
 		fatal("access denied");
 
 	while (quit != 1) {
-		printf("\rcyon(%s)> ", ip);
+		printf("\rcyon(%s)> ", host);
 		fflush(stdout);
 
 		input = NULL;
@@ -237,20 +238,29 @@ cyon_ssl_init(void)
 void
 cyon_connect(void)
 {
-	struct sockaddr_in	sin;
+	int			r;
+	struct addrinfo		*res, *results;
+
+	r = getaddrinfo(host, "3331", NULL, &results);
+	if (r != 0)
+		fatal("%s", gai_strerror(r));
+
+	for (res = results; res != NULL; res = res->ai_next) {
+		if (res->ai_family == AF_INET &&
+		    res->ai_socktype == SOCK_STREAM)
+			break;
+	}
+
+	if (res == NULL)
+		fatal("No useable address found for %s", host);
 
 	if ((cfd = socket(AF_INET, SOCK_STREAM, 0)) == -1)
 		fatal("socket(): %s", errno_s);
 
-	memset(&sin, 0, sizeof(sin));
-	sin.sin_family = AF_INET;
-	sin.sin_port = htons(3331);
-	sin.sin_addr.s_addr = inet_addr(ip);
-
-	if (connect(cfd, (struct sockaddr *)&sin, sizeof(sin)) == -1)
+	if (connect(cfd, res->ai_addr, res->ai_addrlen) == -1)
 		fatal("connect(): %s", errno_s);
 
-	printf("connected to %s:%d\n", ip, 3331);
+	printf("connected to %s:%d\n", host, 3331);
 }
 
 void
