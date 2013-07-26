@@ -166,7 +166,7 @@ cyon_connection_remove(struct connection *c)
 	for (nb = TAILQ_FIRST(&(c->send_queue)); nb != NULL; nb = next) {
 		next = TAILQ_NEXT(nb, list);
 		TAILQ_REMOVE(&(c->send_queue), nb, list);
-		if (nb->buf != NULL)
+		if (nb->buf != NULL && !(nb->flags & NETBUF_USE_DATA_DIRECT))
 			cyon_mem_free(nb->buf);
 		cyon_mem_free(nb);
 	}
