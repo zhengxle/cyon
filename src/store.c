@@ -44,6 +44,8 @@
 #define NODE_FLAG_HASDATA		0x01
 #define NODE_FLAG_DELETED		0x02
 
+#define STORE_HAS_PASSPHRASE		0x01
+
 struct node {
 	u_int8_t	rbase;
 	u_int8_t	rtop;
@@ -240,8 +242,8 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 int
 cyon_store_write(void)
 {
-	u_int8_t		*buf;
 	int			fd, ret;
+	u_int8_t		*buf, flags;
 	u_int32_t		len, blen, mlen;
 	u_char			hash[SHA256_DIGEST_LENGTH];
 
@@ -251,22 +253,31 @@ cyon_store_write(void)
 		return (CYON_RESULT_ERROR);
 	}
 
-	blen = 128 * 1024 * 1024;
-	buf = cyon_malloc(blen);
-	mlen = sizeof(struct node);
-
-	len = 0;
 	SHA256_Init(&sha256ctx);
 
-	if (store_passphrase != NULL) {
+	flags = 0;
+	if (store_passphrase != NULL)
+		flags = STORE_HAS_PASSPHRASE;
+
+	if (!cyon_atomic_write(fd, &flags, sizeof(flags), CYON_ADD_CHECKSUM)) {
+		close(fd);
+		unlink(CYON_STORE_TMPPATH);
+		return (CYON_RESULT_ERROR);
+	}
+
+	if (flags & STORE_HAS_PASSPHRASE) {
 		if (!cyon_atomic_write(fd, store_passphrase,
 		    SHA256_DIGEST_LENGTH, CYON_ADD_CHECKSUM)) {
-			cyon_mem_free(buf);
 			close(fd);
 			unlink(CYON_STORE_TMPPATH);
 			return (CYON_RESULT_ERROR);
 		}
 	}
+
+	len = 0;
+	blen = 128 * 1024 * 1024;
+	buf = cyon_malloc(blen);
+	mlen = sizeof(struct node);
 
 	if (!cyon_store_writenode(fd, rnode, buf, blen, mlen, &len)) {
 		cyon_mem_free(buf);
@@ -383,6 +394,7 @@ cyon_store_map(void)
 {
 	struct stat	st;
 	int		fd;
+	u_int8_t	flags;
 	u_char		hash[SHA256_DIGEST_LENGTH];
 	u_char		ohash[SHA256_DIGEST_LENGTH];
 
@@ -402,6 +414,22 @@ cyon_store_map(void)
 	}
 
 	SHA256_Init(&sha256ctx);
+
+	if (!cyon_atomic_read(fd, &flags, sizeof(flags), CYON_ADD_CHECKSUM)) {
+		close(fd);
+		return (CYON_RESULT_ERROR);
+	}
+
+	if (flags & STORE_HAS_PASSPHRASE) {
+		store_passphrase = cyon_malloc(SHA256_DIGEST_LENGTH);
+		if (!cyon_atomic_read(fd, store_passphrase,
+		    SHA256_DIGEST_LENGTH, CYON_ADD_CHECKSUM)) {
+			close(fd);
+			free(store_passphrase);
+			store_passphrase = NULL;
+			return (CYON_RESULT_ERROR);
+		}
+	}
 
 	rnode = cyon_malloc(sizeof(struct node));
 	if (!cyon_atomic_read(fd, rnode,

@@ -45,6 +45,7 @@ void		cyon_cli_get(u_int8_t, char **);
 void		cyon_cli_quit(u_int8_t, char **);
 void		cyon_cli_stats(u_int8_t, char **);
 void		cyon_cli_write(u_int8_t, char **);
+void		cyon_cli_setauth(u_int8_t, char **);
 
 int		quit = 0;
 int		cfd = -1;
@@ -61,6 +62,7 @@ struct {
 	{ "get",		cyon_cli_get },
 	{ "write",		cyon_cli_write },
 	{ "stats",		cyon_cli_stats },
+	{ "set-auth",		cyon_cli_setauth },
 	{ NULL,		NULL },
 };
 
@@ -472,4 +474,39 @@ cyon_cli_stats(u_int8_t argc, char **argv)
 
 	printf("Memory in use:    %d bytes\n", stats.meminuse);
 	printf("Keys in store:    %ld\n", stats.keycount);
+}
+
+void
+cyon_cli_setauth(u_int8_t argc, char **argv)
+{
+	u_int8_t		*p;
+	u_int32_t		len;
+	struct cyon_op		*op, ret;
+	SHA256_CTX		sha256ctx;
+
+	if (argc != 2) {
+		printf("Usage: set-auth [passphrase]\n");
+		return;
+	}
+
+	len = sizeof(struct cyon_op) + SHA256_DIGEST_LENGTH;
+	if ((p = malloc(len)) == NULL)
+		fatal("malloc(): %s", errno_s);
+
+	op = (struct cyon_op *)p;
+	op->op = CYON_OP_SETAUTH;
+	net_write32((u_int8_t *)&(op->length), SHA256_DIGEST_LENGTH);
+
+	SHA256_Init(&sha256ctx);
+	SHA256_Update(&sha256ctx, argv[1], strlen(argv[1]));
+	SHA256_Final((u_char *)p + sizeof(struct cyon_op), &sha256ctx);
+
+	cyon_ssl_write(p, len);
+
+	memset(&ret, 0, sizeof(ret));
+	cyon_ssl_read(&ret, sizeof(struct cyon_op));
+	if (ret.op == CYON_OP_RESULT_OK)
+		printf("Passphrase was successfully set.\n");
+	else
+		printf("Error while setting the passphrase.\n");
 }

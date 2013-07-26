@@ -28,6 +28,7 @@ static int		cyon_connection_recv_put(struct netbuf *);
 static int		cyon_connection_recv_get(struct netbuf *);
 static int		cyon_connection_recv_auth(struct netbuf *);
 static int		cyon_connection_terminate(struct netbuf *);
+static int		cyon_connection_recv_setauth(struct netbuf *);
 static void		cyon_connection_recv_stats(struct connection *);
 static void		cyon_connection_recv_write(struct connection *);
 
@@ -250,6 +251,9 @@ cyon_connection_recv_op(struct netbuf *nb)
 	case CYON_OP_GET:
 		r = net_recv_expand(c, nb, len, cyon_connection_recv_get);
 		break;
+	case CYON_OP_SETAUTH:
+		r = net_recv_expand(c, nb, len, cyon_connection_recv_setauth);
+		break;
 	case CYON_OP_AUTH:
 		if (len == 0) {
 			r = cyon_connection_recv_auth(nb);
@@ -288,6 +292,11 @@ cyon_connection_recv_put(struct netbuf *nb)
 	klen = net_read32(nb->buf + sizeof(struct cyon_op));
 	dlen = net_read32(nb->buf + sizeof(struct cyon_op) + sizeof(u_int32_t));
 
+	if (klen == 0 || dlen == 0) {
+		cyon_debug("klen: %d - dlen: %d", klen, dlen);
+		return (CYON_RESULT_ERROR);
+	}
+
 	key = nb->buf + sizeof(struct cyon_op) + (sizeof(u_int32_t) * 2);
 	data = key + klen;
 
@@ -313,6 +322,11 @@ cyon_connection_recv_get(struct netbuf *nb)
 	op = (struct cyon_op *)nb->buf;
 	klen = net_read32((u_int8_t *)&(op->length));
 	key = nb->buf + sizeof(struct cyon_op);
+
+	if (klen == 0) {
+		cyon_debug("klen: %d", klen);
+		return (CYON_RESULT_ERROR);
+	}
 
 	if (cyon_store_get(key, klen, &data, &dlen)) {
 		ret.op = CYON_OP_RESULT_OK;
@@ -352,8 +366,7 @@ cyon_connection_recv_auth(struct netbuf *nb)
 	net_write32((u_int8_t *)&(ret.length), 0);
 
 	if ((store_passphrase != NULL &&
-	    !memcmp(store_passphrase, passphrase,
-	    MIN(klen, SHA256_DIGEST_LENGTH))) ||
+	    !memcmp(store_passphrase, passphrase, SHA256_DIGEST_LENGTH)) ||
 	    (store_passphrase == NULL && klen == 0)) {
 		cb = NULL;
 		ret.op = CYON_OP_RESULT_OK;
@@ -368,6 +381,37 @@ cyon_connection_recv_auth(struct netbuf *nb)
 	}
 
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, cb);
+
+	return (CYON_RESULT_OK);
+}
+
+static int
+cyon_connection_recv_setauth(struct netbuf *nb)
+{
+	u_int32_t		klen;
+	u_int8_t		*hash;
+	struct cyon_op		*op, ret;
+	struct connection	*c = (struct connection *)nb->owner;
+
+	op = (struct cyon_op *)nb->buf;
+	klen = net_read32((u_int8_t *)&(op->length));
+	hash = nb->buf + sizeof(struct cyon_op);
+
+	if (klen != SHA256_DIGEST_LENGTH) {
+		cyon_log(LOG_NOTICE, "botched setauth packet from %s",
+		    inet_ntoa(c->sin.sin_addr));
+		return (CYON_RESULT_ERROR);
+	}
+
+	if (store_passphrase != NULL)
+		cyon_mem_free(store_passphrase);
+	store_passphrase = cyon_malloc(SHA256_DIGEST_LENGTH);
+	memcpy(store_passphrase, hash, SHA256_DIGEST_LENGTH);
+
+	ret.op = CYON_OP_RESULT_OK;
+	net_write32((u_int8_t *)&(ret.length), 0);
+
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
 
 	return (CYON_RESULT_OK);
 }
