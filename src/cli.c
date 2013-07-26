@@ -260,6 +260,8 @@ cyon_connect(void)
 	if (connect(cfd, res->ai_addr, res->ai_addrlen) == -1)
 		fatal("connect(): %s", errno_s);
 
+	freeaddrinfo(results);
+
 	printf("connected to %s:%d\n", host, 3331);
 }
 
