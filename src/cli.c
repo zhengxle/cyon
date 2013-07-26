@@ -43,7 +43,6 @@ void		cyon_cli_get(u_int8_t, char **);
 void		cyon_cli_quit(u_int8_t, char **);
 void		cyon_cli_stats(u_int8_t, char **);
 void		cyon_cli_write(u_int8_t, char **);
-void		cyon_cli_stress_server(u_int8_t, char **);
 
 int		quit = 0;
 int		cfd = -1;
@@ -60,7 +59,6 @@ struct {
 	{ "get",		cyon_cli_get },
 	{ "write",		cyon_cli_write },
 	{ "stats",		cyon_cli_stats },
-	{ "stress-server",	cyon_cli_stress_server },
 	{ NULL,		NULL },
 };
 
@@ -385,26 +383,4 @@ cyon_cli_stats(u_int8_t argc, char **argv)
 
 	printf("Memory in use:    %d bytes\n", stats.meminuse);
 	printf("Keys in store:    %ld\n", stats.keycount);
-}
-
-void
-cyon_cli_stress_server(u_int8_t argc, char **argv)
-{
-	u_int32_t	i;
-	char		key[8];
-
-	printf("Inserting a million keys, hang on...\n");
-
-	for (i = 0; i < 1000000; i++) {
-		snprintf(key, sizeof(key), "%d", i);
-
-		if (!cyon_add((u_int8_t *)key, strlen(key),
-		    (u_int8_t *)"Cyon server stress test",
-		    strlen("Cyon server stress test"))) {
-			printf("Error inserting '%s'\n", key);
-			break;
-		}
-	}
-
-	printf("Inserted %d/1000000 keys\n", i);
 }
