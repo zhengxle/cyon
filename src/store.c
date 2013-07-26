@@ -72,11 +72,12 @@ cyon_store_init(void)
 		fatal("could not load store file");
 
 	if (rnode == NULL) {
-		cyon_debug("starting new store");
+		cyon_log(LOG_NOTICE, "starting new store");
 		rnode = cyon_malloc(sizeof(struct node));
 		memset(rnode, 0, sizeof(struct node));
 	} else {
-		cyon_debug("store loaded from disk: %ld keys", key_count);
+		cyon_log(LOG_NOTICE,
+		    "store loaded from disk: %ld keys", key_count);
 	}
 }
 
@@ -201,10 +202,8 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 		    ((idx - p->rbase) * sizeof(struct node)));
 	}
 
-	if (p->flags & NODE_FLAG_HASDATA) {
-		cyon_debug("key already exists");
+	if (p->flags & NODE_FLAG_HASDATA)
 		return (CYON_RESULT_ERROR);
-	}
 
 	old = p->region;
 
@@ -284,7 +283,7 @@ cyon_store_write(void)
 
 	cyon_mem_free(buf);
 
-	cyon_debug("flushing data...");
+	cyon_log(LOG_NOTICE, "flushing store...");
 	for (;;) {
 		ret = fsync(fd);
 		if (ret == -1 && errno == EINTR)

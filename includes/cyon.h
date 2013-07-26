@@ -27,6 +27,7 @@
 #include <openssl/ssl.h>
 
 #include <errno.h>
+#include <syslog.h>
 
 /* Shared server & cli stuff. */
 #define CYON_OP_PUT		1
@@ -128,8 +129,11 @@ extern u_int64_t		key_count;
 extern u_int64_t		last_store_write;
 
 u_int64_t	cyon_time_ms(void);
+void		cyon_log_init(void);
+void		cyon_log(int, const char *, ...);
 void		cyon_strlcpy(char *, const char *, size_t);
 void		cyon_debug_internal(char *, int, const char *, ...);
+long long	cyon_strtonum(const char *, long long, long long, int *);
 
 void		*cyon_malloc(size_t);
 void		*cyon_calloc(size_t, size_t);
@@ -141,6 +145,7 @@ void		cyon_mem_init(void);
 void		cyon_connection_init(void);
 void		cyon_connection_prune(void);
 int		cyon_connection_nonblock(int);
+void		cyon_connection_disconnect_all(void);
 int		cyon_connection_handle(struct connection *);
 void		cyon_connection_remove(struct connection *);
 void		cyon_connection_disconnect(struct connection *);

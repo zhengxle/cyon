@@ -17,6 +17,7 @@
 #include <sys/param.h>
 #include <sys/time.h>
 
+#include <stdarg.h>
 #include <unistd.h>
 
 #include "cyon.h"
@@ -46,6 +47,58 @@ cyon_strlcpy(char *dst, const char *src, size_t len)
 			break;
 		}
 	}
+}
+
+void
+cyon_log_init(void)
+{
+	openlog("cyon", LOG_NDELAY | LOG_PID, LOG_DAEMON);
+}
+
+void
+cyon_log(int prio, const char *fmt, ...)
+{
+	va_list		args;
+	char		buf[1024];
+
+	va_start(args, fmt);
+	vsnprintf(buf, sizeof(buf), fmt, args);
+	va_end(args);
+
+	syslog(prio, "%s", buf);
+}
+
+long long
+cyon_strtonum(const char *str, long long min, long long max, int *err)
+{
+	long long	l;
+	char		*ep;
+
+	if (min > max) {
+		*err = CYON_RESULT_ERROR;
+		return (0);
+	}
+
+	l = 0;
+	errno = 0;
+	l = strtoll(str, &ep, 10);
+	if (errno != 0 || str == ep || *ep != '\0') {
+		*err = CYON_RESULT_ERROR;
+		return (0);
+	}
+
+	if (l < min) {
+		*err = CYON_RESULT_ERROR;
+		return (0);
+	}
+
+	if (l > max) {
+		*err = CYON_RESULT_ERROR;
+		return (0);
+	}
+
+	*err = CYON_RESULT_OK;
+	return (l);
 }
 
 u_int64_t

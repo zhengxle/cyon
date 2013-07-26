@@ -182,6 +182,20 @@ cyon_connection_remove(struct connection *c)
 }
 
 void
+cyon_connection_disconnect_all(void)
+{
+	struct connection	*c, *next;
+
+	for (c = TAILQ_FIRST(&clients); c != NULL; c = next) {
+		next = TAILQ_NEXT(c, list);
+		TAILQ_REMOVE(&clients, c, list);
+		TAILQ_INSERT_TAIL(&disconnected, c, list);
+	}
+
+	cyon_connection_prune();
+}
+
+void
 cyon_connection_prune(void)
 {
 	struct connection	*c, *next;
