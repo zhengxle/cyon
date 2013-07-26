@@ -56,14 +56,19 @@ main(int argc, char *argv[])
 	u_int64_t	now;
 	u_int16_t	port;
 	int		ch, err;
+	u_int8_t	foreground;
 
 	port = 3331;
+	foreground = 0;
 	ip = "127.0.0.1";
 
-	while ((ch = getopt(argc, argv, "b:p:")) != -1) {
+	while ((ch = getopt(argc, argv, "b:fp:")) != -1) {
 		switch (ch) {
 		case 'b':
 			ip = optarg;
+			break;
+		case 'f':
+			foreground = 1;
 			break;
 		case 'p':
 			port = cyon_strtonum(optarg, 1, 65535, &err);
@@ -80,7 +85,7 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (daemon(1, 1) == -1)
+	if (foreground == 0 && daemon(1, 1) == -1)
 		fatal("could not forkify(): %s", errno_s);
 
 	cyon_log_init();
