@@ -34,6 +34,8 @@
 #define CYON_OP_GET		2
 #define CYON_OP_WRITE		3
 #define CYON_OP_STATS		4
+#define CYON_OP_AUTH		5
+#define CYON_OP_SETAUTH		6
 #define CYON_OP_RESULT_OK	200
 #define CYON_OP_RESULT_ERROR	201
 
@@ -102,6 +104,7 @@ struct netbuf {
 
 #define CONN_READ_POSSIBLE		0x01
 #define CONN_WRITE_POSSIBLE		0x02
+#define CONN_AUTHENTICATED		0x10
 
 struct listener {
 	int			fd;
@@ -127,6 +130,7 @@ extern SSL_CTX			*ssl_ctx;
 extern u_int32_t		meminuse;
 extern u_int64_t		key_count;
 extern u_int64_t		last_store_write;
+extern u_char			*store_passphrase;
 
 u_int64_t	cyon_time_ms(void);
 void		cyon_log_init(void);

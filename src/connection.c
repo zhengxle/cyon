@@ -26,6 +26,8 @@
 static int		cyon_connection_recv_op(struct netbuf *);
 static int		cyon_connection_recv_put(struct netbuf *);
 static int		cyon_connection_recv_get(struct netbuf *);
+static int		cyon_connection_recv_auth(struct netbuf *);
+static int		cyon_connection_terminate(struct netbuf *);
 static void		cyon_connection_recv_stats(struct connection *);
 static void		cyon_connection_recv_write(struct connection *);
 
@@ -238,12 +240,23 @@ cyon_connection_recv_op(struct netbuf *nb)
 	len = net_read32((u_int8_t *)&(op->length));
 	cyon_debug("cyon_connection_recv_op(): %d (len: %d)", op->op, len);
 
+	if (!(c->flags & CONN_AUTHENTICATED) && op->op != CYON_OP_AUTH)
+		return (CYON_RESULT_ERROR);
+
 	switch (op->op) {
 	case CYON_OP_PUT:
 		r = net_recv_expand(c, nb, len, cyon_connection_recv_put);
 		break;
 	case CYON_OP_GET:
 		r = net_recv_expand(c, nb, len, cyon_connection_recv_get);
+		break;
+	case CYON_OP_AUTH:
+		if (len == 0) {
+			r = cyon_connection_recv_auth(nb);
+		} else {
+			r = net_recv_expand(c, nb, len,
+			    cyon_connection_recv_auth);
+		}
 		break;
 	case CYON_OP_WRITE:
 		r = CYON_RESULT_OK;
@@ -314,6 +327,57 @@ cyon_connection_recv_get(struct netbuf *nb)
 		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
 	}
 
+	return (CYON_RESULT_OK);
+}
+
+static int
+cyon_connection_recv_auth(struct netbuf *nb)
+{
+	u_int32_t		klen;
+	struct cyon_op		*op, ret;
+	u_int8_t		*passphrase;
+	int			(*cb)(struct netbuf *);
+	struct connection	*c = (struct connection *)nb->owner;
+
+	op = (struct cyon_op *)nb->buf;
+	klen = net_read32((u_int8_t *)&(op->length));
+	passphrase = nb->buf + sizeof(struct cyon_op);
+
+	if (klen != 0 && klen != SHA256_DIGEST_LENGTH) {
+		cyon_log(LOG_NOTICE, "botched authentication request from %s",
+		    inet_ntoa(c->sin.sin_addr));
+		return (CYON_RESULT_ERROR);
+	}
+
+	net_write32((u_int8_t *)&(ret.length), 0);
+
+	if ((store_passphrase != NULL &&
+	    !memcmp(store_passphrase, passphrase,
+	    MIN(klen, SHA256_DIGEST_LENGTH))) ||
+	    (store_passphrase == NULL && klen == 0)) {
+		cb = NULL;
+		ret.op = CYON_OP_RESULT_OK;
+		c->flags |= CONN_AUTHENTICATED;
+		cyon_log(LOG_NOTICE, "connection from %s is now authenticated",
+		    inet_ntoa(c->sin.sin_addr));
+	} else {
+		cb = cyon_connection_terminate;
+		ret.op = CYON_OP_RESULT_ERROR;
+		cyon_log(LOG_NOTICE, "failed authentication from %s",
+		    inet_ntoa(c->sin.sin_addr));
+	}
+
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, cb);
+
+	return (CYON_RESULT_OK);
+}
+
+static int
+cyon_connection_terminate(struct netbuf *nb)
+{
+	struct connection	*c = (struct connection *)nb->owner;
+
+	cyon_connection_disconnect(c);
 	return (CYON_RESULT_OK);
 }
 

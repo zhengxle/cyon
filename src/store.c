@@ -59,6 +59,7 @@ static int	cyon_store_writenode(int, struct node *,
 		    u_int8_t *, u_int32_t, u_int32_t, u_int32_t *);
 
 u_int64_t		key_count;
+u_char			*store_passphrase;
 
 static struct node	*rnode;
 static SHA256_CTX	sha256ctx;
@@ -68,6 +69,8 @@ cyon_store_init(void)
 {
 	key_count = 0;
 	rnode = NULL;
+	store_passphrase = NULL;
+
 	if (!cyon_store_map())
 		fatal("could not load store file");
 
@@ -254,6 +257,16 @@ cyon_store_write(void)
 
 	len = 0;
 	SHA256_Init(&sha256ctx);
+
+	if (store_passphrase != NULL) {
+		if (!cyon_atomic_write(fd, store_passphrase,
+		    SHA256_DIGEST_LENGTH, CYON_ADD_CHECKSUM)) {
+			cyon_mem_free(buf);
+			close(fd);
+			unlink(CYON_STORE_TMPPATH);
+			return (CYON_RESULT_ERROR);
+		}
+	}
 
 	if (!cyon_store_writenode(fd, rnode, buf, blen, mlen, &len)) {
 		cyon_mem_free(buf);

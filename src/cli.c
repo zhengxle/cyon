@@ -17,11 +17,15 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 
+#include <openssl/sha.h>
+
 #include <endian.h>
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <signal.h>
+#include <string.h>
+#include <termios.h>
 #include <unistd.h>
 
 #include "cyon.h"
@@ -72,13 +76,21 @@ usage(void)
 int
 main(int argc, char *argv[])
 {
-	int		r;
-	size_t		len;
-	u_int8_t	count, i;
-	char		*input, **ap, *args[10];
+	int			r;
+	size_t			len;
+	struct termios		termcfg;
+	struct cyon_op		*op, ret;
+	SHA256_CTX		sha256ctx;
+	u_int8_t		count, i, authpwd, *p;
+	u_char			hash[SHA256_DIGEST_LENGTH];
+	char			*input, **ap, *args[10];
 
-	while ((r = getopt(argc, argv, "s:")) != -1) {
+	authpwd = 0;
+	while ((r = getopt(argc, argv, "ps:")) != -1) {
 		switch (r) {
+		case 'p':
+			authpwd = 1;
+			break;
 		case 's':
 			ip = optarg;
 			break;
@@ -96,6 +108,62 @@ main(int argc, char *argv[])
 
 	cyon_connect();
 	cyon_ssl_init();
+
+	if (authpwd) {
+		if (tcgetattr(STDIN_FILENO, &termcfg) == -1)
+			fatal("tcgetattr(): %s", errno_s);
+
+		termcfg.c_lflag &= ~ECHO;
+		if (tcsetattr(STDIN_FILENO, TCSANOW, &termcfg) == -1)
+			fatal("tcsetattr(): %s", errno_s);
+		termcfg.c_lflag |= ECHO;
+
+		printf("passphrase: ");
+		fflush(stdout);
+
+		len = 0;
+		input = NULL;
+		if (getline(&input, &len, stdin) == -1) {
+			if (tcsetattr(STDIN_FILENO, TCSANOW, &termcfg) == -1)
+				fatal("tcsetattr(): %s", errno_s);
+			fatal("getline(): %s", errno_s);
+		}
+
+		input[strlen(input) - 1] = '\0';
+		printf("\n");
+
+		if (tcsetattr(STDIN_FILENO, TCSANOW, &termcfg) == -1)
+			fatal("tcgetattr(): %s", errno_s);
+
+		SHA256_Init(&sha256ctx);
+		SHA256_Update(&sha256ctx, input, strlen(input));
+		SHA256_Final(hash, &sha256ctx);
+		free(input);
+
+		len = sizeof(struct cyon_op) + SHA256_DIGEST_LENGTH;
+		if ((p = malloc(len)) == NULL)
+			fatal("malloc(): %s", errno_s);
+
+		op = (struct cyon_op *)p;
+		op->op = CYON_OP_AUTH;
+		net_write32((u_int8_t *)&(op->length), SHA256_DIGEST_LENGTH);
+		memcpy(p + sizeof(struct cyon_op), hash, SHA256_DIGEST_LENGTH);
+	} else {
+		len = sizeof(struct cyon_op);
+		if ((p = malloc(len)) == NULL)
+			fatal("malloc(): %s", errno_s);
+
+		op = (struct cyon_op *)p;
+		op->op = CYON_OP_AUTH;
+		net_write32((u_int8_t *)&(op->length), 0);
+	}
+
+	cyon_ssl_write(p, len);
+	free(p);
+
+	cyon_ssl_read(&ret, sizeof(struct cyon_op));
+	if (ret.op != CYON_OP_RESULT_OK)
+		fatal("access denied");
 
 	while (quit != 1) {
 		printf("\rcyon(%s)> ", ip);
@@ -225,7 +293,7 @@ cyon_add(u_int8_t *key, u_int32_t klen, u_int8_t *d, u_int32_t dlen)
 	len = flen + sizeof(struct cyon_op);
 
 	if ((p = malloc(len)) == NULL)
-		fatal("malloc(): %d", errno_s);
+		fatal("malloc(): %s", errno_s);
 
 	op = (struct cyon_op *)p;
 	op->op = CYON_OP_PUT;
@@ -267,7 +335,7 @@ cyon_get(u_int8_t *key, u_int32_t klen, u_int8_t **out, u_int32_t *dlen)
 	if (op.op == CYON_OP_RESULT_OK) {
 		*dlen = net_read32((u_int8_t *)&(op.length));
 		if ((*out = malloc(*dlen)) == NULL)
-			fatal("malloc(): %d", errno);
+			fatal("malloc(): %s", errno_s);
 		cyon_ssl_read(*out, *dlen);
 	} else if (op.op != CYON_OP_RESULT_ERROR) {
 		printf("Unexpected result from server: %d\n", op.op);
@@ -296,19 +364,19 @@ cyon_cli_put(u_int8_t argc, char **argv)
 	}
 
 	if ((fd = open(argv[2], O_RDONLY)) == -1) {
-		printf("could not open '%s': %d\n", argv[2], errno);
+		printf("could not open '%s': %s\n", argv[2], errno_s);
 		return;
 	}
 
 	if (fstat(fd, &st) == -1) {
 		close(fd);
-		printf("fstat() failed: %d\n", errno);
+		printf("fstat() failed: %s\n", errno_s);
 		return;
 	}
 
 	if ((d = malloc(st.st_size)) == NULL) {
 		close(fd);
-		printf("malloc(): failed: %d\n", errno);
+		printf("malloc(): failed: %s\n", errno_s);
 		return;
 	}
 
@@ -347,7 +415,7 @@ cyon_cli_get(u_int8_t argc, char **argv)
 
 		fd = open(argv[2], O_CREAT | O_TRUNC | O_WRONLY, 0700);
 		if (fd == -1)
-			fatal("open(%s): %d", argv[2], errno);
+			fatal("open(%s): %s", argv[2], errno_s);
 
 		r = write(fd, data, dlen);
 		close(fd);
