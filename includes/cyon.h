@@ -42,12 +42,12 @@
 struct cyon_op {
 	u_int8_t		op;
 	u_int32_t		length;
-};
+} __attribute__((__packed__));
 
 struct cyon_stats {
 	u_int32_t		meminuse;
 	u_int64_t		keycount;
-};
+} __attribute__((__packed__));
 
 #define CYON_RESULT_ERROR	0
 #define CYON_RESULT_OK		1

@@ -19,6 +19,7 @@
 #include <sys/socket.h>
 
 #include <fcntl.h>
+#include <signal.h>
 #include <unistd.h>
 
 #include "cyon.h"

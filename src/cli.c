@@ -423,7 +423,7 @@ cyon_cli_get(u_int8_t argc, char **argv)
 		close(fd);
 		free(data);
 
-		if (r != dlen)
+		if (r != (ssize_t)dlen)
 			printf("Error while writing to '%s'.\n", argv[2]);
 		else
 			printf("Data stored in '%s'.\n", argv[2]);
@@ -464,7 +464,8 @@ cyon_cli_stats(u_int8_t argc, char **argv)
 	cyon_ssl_read(&op, sizeof(op));
 	len = net_read32((u_int8_t *)&(op.length));
 	if (op.op != CYON_OP_RESULT_OK || len != sizeof(struct cyon_stats)) {
-		printf("Received unexpected result from server.\n");
+		printf("Received unexpected result from server (%d, %d).\n",
+		    op.op, len);
 		return;
 	}
 
