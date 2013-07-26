@@ -17,8 +17,6 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 
-#include <netinet/tcp.h>
-
 #include <endian.h>
 #include <fcntl.h>
 #include <stdarg.h>
@@ -135,6 +133,11 @@ main(int argc, char *argv[])
 void
 cyon_ssl_init(void)
 {
+	u_int8_t	i;
+	u_int32_t	len;
+	X509		*cert;
+	u_char		fp[EVP_MAX_MD_SIZE];
+
 	SSL_library_init();
 	SSL_load_error_strings();
 
@@ -149,20 +152,25 @@ cyon_ssl_init(void)
 		fatal("SSL_set_fd(): %s", ssl_errno_s);
 	if (!SSL_connect(ssl))
 		fatal("could not connect over SSL: %s", ssl_errno_s);
+
+	if ((cert = SSL_get_peer_certificate(ssl)) == NULL)
+		fatal("no peer certificate received? %s", ssl_errno_s);
+	if (X509_digest(cert, EVP_sha1(), fp, &len) < 0)
+		fatal("could not read fingerprint: %s", ssl_errno_s);
+
+	printf("SHA1 fingerprint ");
+	for (i = 0; i < len; i++)
+		printf("%02x%s", fp[i], (i != (len - 1)) ? ":" : "");
+	printf("\n");
 }
 
 void
 cyon_connect(void)
 {
-	int			on;
 	struct sockaddr_in	sin;
 
 	if ((cfd = socket(AF_INET, SOCK_STREAM, 0)) == -1)
 		fatal("socket(): %s", errno_s);
-
-	on = 1;
-	if (setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on)) == -1)
-		fatal("setsockopt(): %d", errno_s);
 
 	memset(&sin, 0, sizeof(sin));
 	sin.sin_family = AF_INET;
@@ -171,6 +179,8 @@ cyon_connect(void)
 
 	if (connect(cfd, (struct sockaddr *)&sin, sizeof(sin)) == -1)
 		fatal("connect(): %s", errno_s);
+
+	printf("connected to %s:%d\n", ip, 3331);
 }
 
 void
@@ -190,8 +200,18 @@ cyon_ssl_write(void *src, u_int32_t len)
 void
 cyon_ssl_read(void *dst, u_int32_t len)
 {
-	if (SSL_read(ssl, dst, len) <= 0)
-		fatal("SSL_read(): %s", ssl_errno_s);
+	int		r;
+	u_int32_t	off;
+	u_int8_t	*b = (u_int8_t *)dst;
+
+	r = 0;
+	off = 0;
+	while (off != len) {
+		r = SSL_read(ssl, b + off, len - off);
+		if (r <= 0)
+			fatal("SSL_read(): %s", ssl_errno_s);
+		off += r;
+	}
 }
 
 int
@@ -239,17 +259,18 @@ cyon_get(u_int8_t *key, u_int32_t klen, u_int8_t **out, u_int32_t *dlen)
 	cyon_ssl_write(&op, sizeof(op));
 	cyon_ssl_write(key, klen);
 
+	*dlen = 0;
+	*out = NULL;
+
 	memset(&op, 0, sizeof(op));
 	cyon_ssl_read(&op, sizeof(op));
 	if (op.op == CYON_OP_RESULT_OK) {
 		*dlen = net_read32((u_int8_t *)&(op.length));
 		if ((*out = malloc(*dlen)) == NULL)
 			fatal("malloc(): %d", errno);
-
 		cyon_ssl_read(*out, *dlen);
-	} else {
-		*dlen = 0;
-		*out = NULL;
+	} else if (op.op != CYON_OP_RESULT_ERROR) {
+		printf("Unexpected result from server: %d\n", op.op);
 	}
 
 	return (*out != NULL);
