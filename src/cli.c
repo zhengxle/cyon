@@ -26,7 +26,6 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <string.h>
-#include <termios.h>
 #include <unistd.h>
 
 #include "cyon.h"
@@ -81,7 +80,6 @@ main(int argc, char *argv[])
 {
 	int			r;
 	size_t			len;
-	struct termios		termcfg;
 	struct cyon_op		*op, ret;
 	SHA256_CTX		sha256ctx;
 	u_int8_t		count, i, authpwd, *p;
@@ -113,35 +111,13 @@ main(int argc, char *argv[])
 	cyon_ssl_init();
 
 	if (authpwd) {
-		if (tcgetattr(STDIN_FILENO, &termcfg) == -1)
-			fatal("tcgetattr(): %s", errno_s);
-
-		termcfg.c_lflag &= ~ECHO;
-		if (tcsetattr(STDIN_FILENO, TCSANOW, &termcfg) == -1)
-			fatal("tcsetattr(): %s", errno_s);
-		termcfg.c_lflag |= ECHO;
-
-		printf("passphrase: ");
-		fflush(stdout);
-
-		len = 0;
-		input = NULL;
-		if (getline(&input, &len, stdin) == -1) {
-			if (tcsetattr(STDIN_FILENO, TCSANOW, &termcfg) == -1)
-				fatal("tcsetattr(): %s", errno_s);
-			fatal("getline(): %s", errno_s);
-		}
-
-		input[strlen(input) - 1] = '\0';
-		printf("\n");
-
-		if (tcsetattr(STDIN_FILENO, TCSANOW, &termcfg) == -1)
-			fatal("tcgetattr(): %s", errno_s);
+		if ((input = getpass("passphrase: ")) == NULL)
+			fatal("could not read passphrase");
 
 		SHA256_Init(&sha256ctx);
 		SHA256_Update(&sha256ctx, input, strlen(input));
 		SHA256_Final(hash, &sha256ctx);
-		free(input);
+		memset(input, '\0', strlen(input));
 
 		len = sizeof(struct cyon_op) + SHA256_DIGEST_LENGTH;
 		if ((p = malloc(len)) == NULL)
