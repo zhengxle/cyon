@@ -34,6 +34,8 @@ struct member {
 volatile sig_atomic_t	sig_recv;
 
 struct listener		server;
+u_int8_t		cyon_mode;
+char			*join_node;
 extern const char	*__progname;
 SSL_CTX			*ssl_ctx = NULL;
 u_int64_t		last_store_write;
@@ -62,14 +64,27 @@ main(int argc, char *argv[])
 	port = 3331;
 	foreground = 0;
 	ip = "127.0.0.1";
+	join_node = NULL;
+	cyon_mode = CYON_MODE_INDEX;
 
-	while ((ch = getopt(argc, argv, "b:fp:")) != -1) {
+	while ((ch = getopt(argc, argv, "b:fjm:p:")) != -1) {
 		switch (ch) {
 		case 'b':
 			ip = optarg;
 			break;
 		case 'f':
 			foreground = 1;
+			break;
+		case 'j':
+			join_node = optarg;
+			break;
+		case 'm':
+			if (!strcmp(optarg, "index"))
+				cyon_mode = CYON_MODE_INDEX;
+			else if (!strcmp(optarg, "storage"))
+				cyon_mode = CYON_MODE_STORAGE;
+			else
+				fatal("invalid mode: %s", optarg);
 			break;
 		case 'p':
 			port = cyon_strtonum(optarg, 1, 65535, &err);
@@ -86,8 +101,8 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (foreground == 0 && daemon(1, 1) == -1)
-		fatal("could not forkify(): %s", errno_s);
+	if (cyon_mode == CYON_MODE_STORAGE && join_node == NULL)
+		fatal("specify an index node to join (-j)");
 
 	cyon_log_init();
 	cyon_mem_init();
@@ -95,6 +110,10 @@ main(int argc, char *argv[])
 	cyon_connection_init();
 	cyon_server_bind(&server, ip, port);
 	cyon_platform_event_init();
+
+	if (foreground == 0 && daemon(1, 1) == -1)
+		fatal("could not forkify(): %s", errno_s);
+
 	cyon_store_init();
 
 	sig_recv = 0;

@@ -70,6 +70,9 @@ void		fatal(const char *, ...);
 #define cyon_debug(fmt, ...)
 #endif
 
+#define CYON_MODE_INDEX		0
+#define CYON_MODE_STORAGE	1
+
 #define STORE_KLEN_OFFSET(b)		((b + sizeof(struct cyon_op)))
 #define STORE_DLEN_OFFSET(b)		((b + sizeof(struct cyon_op) + 4))
 #define STORE_KEY_OFFSET(b)		((b + sizeof(struct cyon_op) + 8))
