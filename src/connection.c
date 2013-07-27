@@ -357,7 +357,8 @@ cyon_connection_recv_auth(struct netbuf *nb)
 	klen = net_read32((u_int8_t *)&(op->length));
 	passphrase = nb->buf + sizeof(struct cyon_op);
 
-	if (klen != 0 && klen != SHA256_DIGEST_LENGTH) {
+	if ((store_passphrase == NULL && klen != 0) ||
+	    (store_passphrase != NULL && klen != SHA256_DIGEST_LENGTH)) {
 		cyon_log(LOG_NOTICE, "botched authentication request from %s",
 		    inet_ntoa(c->sin.sin_addr));
 		return (CYON_RESULT_ERROR);
