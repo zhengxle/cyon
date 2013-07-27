@@ -42,7 +42,6 @@
 #define CYON_STORE_TMPPATH		"cyon.store.tmp"
 
 #define NODE_FLAG_HASDATA		0x01
-#define NODE_FLAG_DELETED		0x02
 
 #define STORE_HAS_PASSPHRASE		0x01
 
@@ -96,7 +95,7 @@ cyon_store_get(u_int8_t *key, u_int32_t len, u_int8_t **out, u_int32_t *olen)
 	if ((p = cyon_node_lookup(key, len)) == NULL)
 		return (CYON_RESULT_ERROR);
 
-	if (!(p->flags & NODE_FLAG_HASDATA) || (p->flags & NODE_FLAG_DELETED))
+	if (!(p->flags & NODE_FLAG_HASDATA))
 		return (CYON_RESULT_ERROR);
 
 	*olen = *(u_int32_t *)p->region;
@@ -109,12 +108,29 @@ int
 cyon_store_del(u_int8_t *key, u_int32_t len)
 {
 	struct node	*p;
+	u_int8_t	*old;
+	u_int32_t	offset, rlen;
 
 	if ((p = cyon_node_lookup(key, len)) == NULL)
 		return (CYON_RESULT_ERROR);
 
+	if (!(p->flags & NODE_FLAG_HASDATA))
+		return (CYON_RESULT_ERROR);
+
 	key_count--;
-	p->flags |= NODE_FLAG_DELETED;
+	p->flags = 0;
+
+	if (p->rbase == 0 && p->rtop == 0) {
+		cyon_mem_free(p->region);
+		p->region = NULL;
+	} else {
+		offset = sizeof(u_int32_t) + *(u_int32_t *)p->region;
+		rlen = ((p->rtop - p->rbase) + 1) * sizeof(struct node);
+		old = p->region;
+
+		p->region = cyon_malloc(rlen);
+		memcpy(p->region, old + offset, rlen);
+	}
 
 	return (CYON_RESULT_OK);
 }
@@ -479,8 +495,7 @@ cyon_store_mapnode(int fd, struct node *p)
 		return (CYON_RESULT_OK);
 
 	if (p->flags & NODE_FLAG_HASDATA) {
-		if (!(p->flags & NODE_FLAG_DELETED))
-			key_count++;
+		key_count++;
 
 		if (!cyon_atomic_read(fd, &offset,
 		    sizeof(u_int32_t), CYON_ADD_CHECKSUM))
