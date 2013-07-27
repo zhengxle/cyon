@@ -53,12 +53,13 @@ struct node {
 	u_int8_t	*region;
 } __attribute__((__packed__));
 
-static int	cyon_store_map(void);
-static int	cyon_atomic_read(int, void *, u_int32_t, int);
-static int	cyon_atomic_write(int, void *, u_int32_t, int);
-static int	cyon_store_mapnode(int, struct node *);
-static int	cyon_store_writenode(int, struct node *,
-		    u_int8_t *, u_int32_t, u_int32_t, u_int32_t *);
+static int		cyon_store_map(void);
+static int		cyon_atomic_read(int, void *, u_int32_t, int);
+static int		cyon_atomic_write(int, void *, u_int32_t, int);
+static int		cyon_store_mapnode(int, struct node *);
+static struct node	*cyon_node_lookup(u_int8_t *, u_int32_t);
+static int		cyon_store_writenode(int, struct node *,
+			    u_int8_t *, u_int32_t, u_int32_t, u_int32_t *);
 
 u_int64_t		key_count;
 u_char			*store_passphrase;
@@ -89,35 +90,31 @@ cyon_store_init(void)
 int
 cyon_store_get(u_int8_t *key, u_int32_t len, u_int8_t **out, u_int32_t *olen)
 {
-	u_int32_t	i;
 	struct node	*p;
-	u_int8_t	idx;
-	u_int32_t	rlen;
-
-	p = rnode;
-	for (i = 0; i < len; i++) {
-		idx = key[i];
-		if (p == NULL || p->region == NULL)
-			break;
-
-		if (idx < p->rbase || idx > p->rtop)
-			break;
-
-		if (p->flags & NODE_FLAG_HASDATA)
-			rlen = sizeof(u_int32_t) + *(u_int32_t *)p->region;
-		else
-			rlen = 0;
-
-		p = (struct node *)((u_int8_t *)p->region + rlen +
-		    ((idx - p->rbase) * sizeof(struct node)));
-	}
 
 	*out = NULL;
+	if ((p = cyon_node_lookup(key, len)) == NULL)
+		return (CYON_RESULT_ERROR);
+
 	if (!(p->flags & NODE_FLAG_HASDATA) || (p->flags & NODE_FLAG_DELETED))
 		return (CYON_RESULT_ERROR);
 
 	*olen = *(u_int32_t *)p->region;
 	*out = p->region + sizeof(u_int32_t);
+
+	return (CYON_RESULT_OK);
+}
+
+int
+cyon_store_del(u_int8_t *key, u_int32_t len)
+{
+	struct node	*p;
+
+	if ((p = cyon_node_lookup(key, len)) == NULL)
+		return (CYON_RESULT_ERROR);
+
+	key_count--;
+	p->flags |= NODE_FLAG_DELETED;
 
 	return (CYON_RESULT_OK);
 }
@@ -482,7 +479,8 @@ cyon_store_mapnode(int fd, struct node *p)
 		return (CYON_RESULT_OK);
 
 	if (p->flags & NODE_FLAG_HASDATA) {
-		key_count++;
+		if (!(p->flags & NODE_FLAG_DELETED))
+			key_count++;
 
 		if (!cyon_atomic_read(fd, &offset,
 		    sizeof(u_int32_t), CYON_ADD_CHECKSUM))
@@ -583,4 +581,33 @@ cyon_atomic_read(int fd, void *buf, u_int32_t len, int calc)
 		SHA256_Update(&sha256ctx, buf, len);
 
 	return (CYON_RESULT_OK);
+}
+
+static struct node *
+cyon_node_lookup(u_int8_t *key, u_int32_t len)
+{
+	u_int32_t	i;
+	struct node	*p;
+	u_int8_t	idx;
+	u_int32_t	rlen;
+
+	p = rnode;
+	for (i = 0; i < len; i++) {
+		idx = key[i];
+		if (p == NULL || p->region == NULL)
+			return (NULL);
+
+		if (idx < p->rbase || idx > p->rtop)
+			return (NULL);
+
+		if (p->flags & NODE_FLAG_HASDATA)
+			rlen = sizeof(u_int32_t) + *(u_int32_t *)p->region;
+		else
+			rlen = 0;
+
+		p = (struct node *)((u_int8_t *)p->region + rlen +
+		    ((idx - p->rbase) * sizeof(struct node)));
+	}
+
+	return (p);
 }

@@ -26,6 +26,7 @@
 static int		cyon_connection_recv_op(struct netbuf *);
 static int		cyon_connection_recv_put(struct netbuf *);
 static int		cyon_connection_recv_get(struct netbuf *);
+static int		cyon_connection_recv_del(struct netbuf *);
 static int		cyon_connection_recv_auth(struct netbuf *);
 static int		cyon_connection_terminate(struct netbuf *);
 static int		cyon_connection_recv_setauth(struct netbuf *);
@@ -254,6 +255,9 @@ cyon_connection_recv_op(struct netbuf *nb)
 	case CYON_OP_SETAUTH:
 		r = net_recv_expand(c, nb, len, cyon_connection_recv_setauth);
 		break;
+	case CYON_OP_DEL:
+		r = net_recv_expand(c, nb, len, cyon_connection_recv_del);
+		break;
 	case CYON_OP_AUTH:
 		if (len == 0) {
 			r = cyon_connection_recv_auth(nb);
@@ -341,6 +345,33 @@ cyon_connection_recv_get(struct netbuf *nb)
 		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
 	}
 
+	return (CYON_RESULT_OK);
+}
+
+static int
+cyon_connection_recv_del(struct netbuf *nb)
+{
+	u_int32_t		klen;
+	u_int8_t		*key;
+	struct cyon_op		ret, *op;
+	struct connection	*c = (struct connection *)nb->owner;
+
+	op = (struct cyon_op *)nb->buf;
+	klen = net_read32((u_int8_t *)&(op->length));
+	key = nb->buf + sizeof(struct cyon_op);
+
+	if (klen == 0) {
+		cyon_debug("klen: %d", klen);
+		return (CYON_RESULT_ERROR);
+	}
+
+	if (cyon_store_del(key, klen))
+		ret.op = CYON_OP_RESULT_OK;
+	else
+		ret.op = CYON_OP_RESULT_ERROR;
+
+	net_write32((u_int8_t *)&(ret.length), 0);
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
 	return (CYON_RESULT_OK);
 }
 

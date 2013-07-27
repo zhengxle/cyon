@@ -36,6 +36,7 @@
 #define CYON_OP_STATS		4
 #define CYON_OP_AUTH		5
 #define CYON_OP_SETAUTH		6
+#define CYON_OP_DEL		7
 #define CYON_OP_RESULT_OK	200
 #define CYON_OP_RESULT_ERROR	201
 
@@ -177,6 +178,7 @@ int		net_recv_flush(struct connection *);
 
 void		cyon_store_init(void);
 int		cyon_store_write(void);
+int		cyon_store_del(u_int8_t *, u_int32_t);
 int		cyon_store_put(u_int8_t *, u_int32_t, u_int8_t *, u_int32_t);
 int		cyon_store_get(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);
 

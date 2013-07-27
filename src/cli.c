@@ -37,11 +37,13 @@ void		cyon_disconnect(void);
 void		fatal(const char *, ...);
 void		cyon_ssl_write(void *, u_int32_t);
 void		cyon_ssl_read(void *, u_int32_t);
+int		cyon_del(u_int8_t *, u_int32_t);
 int		cyon_add(u_int8_t *, u_int32_t, u_int8_t *, u_int32_t);
 int		cyon_get(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);
 
 void		cyon_cli_put(u_int8_t, char **);
 void		cyon_cli_get(u_int8_t, char **);
+void		cyon_cli_del(u_int8_t, char **);
 void		cyon_cli_quit(u_int8_t, char **);
 void		cyon_cli_stats(u_int8_t, char **);
 void		cyon_cli_write(u_int8_t, char **);
@@ -60,6 +62,7 @@ struct {
 	{ "quit",		cyon_cli_quit },
 	{ "put",		cyon_cli_put },
 	{ "get",		cyon_cli_get },
+	{ "del",		cyon_cli_del },
 	{ "write",		cyon_cli_write },
 	{ "stats",		cyon_cli_stats },
 	{ "set-auth",		cyon_cli_setauth },
@@ -334,6 +337,26 @@ cyon_get(u_int8_t *key, u_int32_t klen, u_int8_t **out, u_int32_t *dlen)
 	return (*out != NULL);
 }
 
+int
+cyon_del(u_int8_t *key, u_int32_t klen)
+{
+	struct cyon_op		op;
+
+	op.op = CYON_OP_DEL;
+	net_write32((u_int8_t *)&(op.length), klen);
+
+	cyon_ssl_write(&op, sizeof(op));
+	cyon_ssl_write(key, klen);
+
+	memset(&op, 0, sizeof(op));
+	cyon_ssl_read(&op, sizeof(op));
+
+	if (op.op != CYON_OP_RESULT_OK && op.op != CYON_OP_RESULT_ERROR)
+		printf("Unexpected result from server: %d\n", op.op);
+
+	return (op.op == CYON_OP_RESULT_OK);
+}
+
 void
 cyon_cli_quit(u_int8_t argc, char **argv)
 {
@@ -418,6 +441,20 @@ cyon_cli_get(u_int8_t argc, char **argv)
 	} else {
 		printf("The server did not return a result.\n");
 	}
+}
+
+void
+cyon_cli_del(u_int8_t argc, char **argv)
+{
+	if (argc != 2) {
+		printf("del [key]\n");
+		return;
+	}
+
+	if (cyon_del((u_int8_t *)argv[1], strlen(argv[1])))
+		printf("Key was successfully deleted.\n");
+	else
+		printf("An error occured while deleting the key.\n");
 }
 
 void
