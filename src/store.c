@@ -130,6 +130,8 @@ cyon_store_del(u_int8_t *key, u_int32_t len)
 
 		p->region = cyon_malloc(rlen);
 		memcpy(p->region, old + offset, rlen);
+
+		cyon_mem_free(old);
 	}
 
 	return (CYON_RESULT_OK);
