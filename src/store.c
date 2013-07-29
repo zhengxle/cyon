@@ -69,8 +69,8 @@ static SHA256_CTX	sha256ctx;
 void
 cyon_store_init(void)
 {
-	key_count = 0;
 	rnode = NULL;
+	key_count = 0;
 	store_passphrase = NULL;
 
 	if (!cyon_store_map())
