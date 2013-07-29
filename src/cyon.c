@@ -24,13 +24,6 @@
 
 #include "cyon.h"
 
-struct member {
-	u_int64_t		offset;
-	u_int32_t		length;
-	u_int8_t		*cksum;
-	struct member		**next;
-} __attribute__((__packed__));
-
 volatile sig_atomic_t	sig_recv;
 
 struct listener		server;
