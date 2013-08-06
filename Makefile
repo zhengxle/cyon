@@ -16,6 +16,7 @@ LDFLAGS+=-lssl -lcrypto
 
 all:
 	make cyon-server
+	rm src/shared.o
 	make cyon-cli
 
 cyon-server: $(S_SRC)
