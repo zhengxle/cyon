@@ -39,7 +39,8 @@ static void		cyon_server_bind(struct listener *, char *, u_int16_t);
 static void
 usage(void)
 {
-	fprintf(stderr, "Usage: %s [-b ip] [-p port]\n", __progname);
+	fprintf(stderr,
+	    "Usage: %s [-b ip] [-p port] [-s storepath]\n", __progname);
 	exit(1);
 }
 
@@ -54,9 +55,10 @@ main(int argc, char *argv[])
 
 	port = 3331;
 	foreground = 0;
+	storepath = NULL;
 	ip = "127.0.0.1";
 
-	while ((ch = getopt(argc, argv, "b:fm:p:")) != -1) {
+	while ((ch = getopt(argc, argv, "b:fp:s:")) != -1) {
 		switch (ch) {
 		case 'b':
 			ip = optarg;
@@ -64,12 +66,15 @@ main(int argc, char *argv[])
 		case 'f':
 			foreground = 1;
 			break;
-		case 'm':
-			break;
 		case 'p':
 			port = cyon_strtonum(optarg, 1, 65535, &err);
-			if (err != CYON_RESULT_OK)
-				fatal("invalid port: %s", optarg);
+			if (err != CYON_RESULT_OK) {
+				fprintf(stderr, "Invalid port: %s\n", optarg);
+				exit(1);
+			}
+			break;
+		case 's':
+			storepath = optarg;
 			break;
 		case '?':
 		default:
@@ -81,6 +86,11 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
+	if (storepath == NULL) {
+		fprintf(stderr, "No storepath set\n");
+		usage();
+	}
+
 	cyon_log_init();
 	cyon_mem_init();
 	cyon_ssl_init();
@@ -88,8 +98,10 @@ main(int argc, char *argv[])
 	cyon_server_bind(&server, ip, port);
 	cyon_platform_event_init();
 
-	if (foreground == 0 && daemon(1, 1) == -1)
-		fatal("could not forkify(): %s", errno_s);
+	if (foreground == 0 && daemon(1, 1) == -1) {
+		fprintf(stderr, "could not forkify(): %s", errno_s);
+		exit(1);
+	}
 
 	cyon_store_init();
 

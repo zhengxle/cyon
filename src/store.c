@@ -14,7 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include <sys/types.h>
+#include <sys/param.h>
 #include <sys/time.h>
 #include <sys/stat.h>
 
@@ -38,8 +38,8 @@
 #define CYON_NO_CHECKSUM		0
 #define CYON_ADD_CHECKSUM		1
 
-#define CYON_STORE_PATH			"cyon.store"
-#define CYON_STORE_TMPPATH		"cyon.store.tmp"
+#define CYON_STORE_FILE			"cyon.store"
+#define CYON_STORE_TMPFILE		"cyon.store.tmp"
 
 #define NODE_FLAG_HASDATA		0x01
 
@@ -61,6 +61,7 @@ static int		cyon_store_writenode(int, struct node *,
 			    u_int8_t *, u_int32_t, u_int32_t, u_int32_t *);
 
 u_int64_t		key_count;
+char			*storepath;
 u_char			*store_passphrase;
 
 static struct node	*rnode;
@@ -257,14 +258,18 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 int
 cyon_store_write(void)
 {
-	int			fd, ret;
-	u_int8_t		*buf, flags;
-	u_int32_t		len, blen, mlen;
-	u_char			hash[SHA256_DIGEST_LENGTH];
+	int		fd, ret;
+	u_int8_t	*buf, flags;
+	u_int32_t	len, blen, mlen;
+	u_char		hash[SHA256_DIGEST_LENGTH];
+	char		fpath[MAXPATHLEN], tpath[MAXPATHLEN];
 
-	fd = open(CYON_STORE_TMPPATH, O_CREAT | O_TRUNC | O_WRONLY, 0700);
+	snprintf(fpath, sizeof(fpath), "%s/%s", storepath, CYON_STORE_FILE);
+	snprintf(tpath, sizeof(tpath), "%s/%s", storepath, CYON_STORE_TMPFILE);
+
+	fd = open(tpath, O_CREAT | O_TRUNC | O_WRONLY, 0700);
 	if (fd == -1) {
-		cyon_debug("open(%s): %d", CYON_STORE_TMPPATH, errno);
+		cyon_debug("open(%s): %d", tfile, errno);
 		return (CYON_RESULT_ERROR);
 	}
 
@@ -276,7 +281,7 @@ cyon_store_write(void)
 
 	if (!cyon_atomic_write(fd, &flags, sizeof(flags), CYON_ADD_CHECKSUM)) {
 		close(fd);
-		unlink(CYON_STORE_TMPPATH);
+		unlink(tpath);
 		return (CYON_RESULT_ERROR);
 	}
 
@@ -284,7 +289,7 @@ cyon_store_write(void)
 		if (!cyon_atomic_write(fd, store_passphrase,
 		    SHA256_DIGEST_LENGTH, CYON_ADD_CHECKSUM)) {
 			close(fd);
-			unlink(CYON_STORE_TMPPATH);
+			unlink(tpath);
 			return (CYON_RESULT_ERROR);
 		}
 	}
@@ -297,7 +302,7 @@ cyon_store_write(void)
 	if (!cyon_store_writenode(fd, rnode, buf, blen, mlen, &len)) {
 		cyon_mem_free(buf);
 		close(fd);
-		unlink(CYON_STORE_TMPPATH);
+		unlink(tpath);
 		return (CYON_RESULT_ERROR);
 	}
 
@@ -305,7 +310,7 @@ cyon_store_write(void)
 		if (!cyon_atomic_write(fd, buf, len, CYON_ADD_CHECKSUM)) {
 			cyon_mem_free(buf);
 			close(fd);
-			unlink(CYON_STORE_TMPPATH);
+			unlink(tpath);
 			return (CYON_RESULT_ERROR);
 		}
 	}
@@ -316,7 +321,7 @@ cyon_store_write(void)
 	    SHA256_DIGEST_LENGTH, CYON_NO_CHECKSUM)) {
 		cyon_mem_free(buf);
 		close(fd);
-		unlink(CYON_STORE_TMPPATH);
+		unlink(tpath);
 		return (CYON_RESULT_ERROR);
 	}
 
@@ -330,7 +335,7 @@ cyon_store_write(void)
 		if (ret == -1) {
 			close(fd);
 			cyon_debug("fsync(): %d, aborting!", errno);
-			unlink(CYON_STORE_TMPPATH);
+			unlink(tpath);
 			return (CYON_RESULT_ERROR);
 		}
 
@@ -339,9 +344,9 @@ cyon_store_write(void)
 
 	close(fd);
 
-	if (rename(CYON_STORE_TMPPATH, CYON_STORE_PATH) == -1) {
+	if (rename(tpath, fpath) == -1) {
 		cyon_debug("cannot move store into place: %d", errno);
-		unlink(CYON_STORE_TMPPATH);
+		unlink(tpath);
 		return (CYON_RESULT_ERROR);
 	}
 
@@ -410,12 +415,14 @@ cyon_store_map(void)
 	struct stat	st;
 	int		fd;
 	u_int8_t	flags;
+	char		fpath[MAXPATHLEN];
 	u_char		hash[SHA256_DIGEST_LENGTH];
 	u_char		ohash[SHA256_DIGEST_LENGTH];
 
-	if ((fd = open(CYON_STORE_PATH, O_RDONLY)) == -1) {
+	snprintf(fpath, sizeof(fpath), "%s/%s", storepath, CYON_STORE_FILE);
+	if ((fd = open(fpath, O_RDONLY)) == -1) {
 		if (errno != ENOENT) {
-			cyon_debug("open(%s): %s", CYON_STORE_PATH, errno);
+			cyon_debug("open(%s): %s", fpath, errno);
 			return (CYON_RESULT_ERROR);
 		}
 

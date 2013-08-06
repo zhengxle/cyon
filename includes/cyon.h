@@ -138,6 +138,7 @@ extern struct listener		server;
 extern SSL_CTX			*ssl_ctx;
 extern u_int32_t		meminuse;
 extern u_int64_t		key_count;
+extern char			*storepath;
 extern u_int64_t		last_store_write;
 extern u_char			*store_passphrase;
 
