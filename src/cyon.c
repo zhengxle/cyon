@@ -27,7 +27,6 @@
 volatile sig_atomic_t	sig_recv;
 
 struct listener		server;
-u_int8_t		cyon_mode;
 char			*join_node;
 extern const char	*__progname;
 SSL_CTX			*ssl_ctx = NULL;
@@ -58,9 +57,8 @@ main(int argc, char *argv[])
 	foreground = 0;
 	ip = "127.0.0.1";
 	join_node = NULL;
-	cyon_mode = CYON_MODE_INDEX;
 
-	while ((ch = getopt(argc, argv, "b:fjm:p:")) != -1) {
+	while ((ch = getopt(argc, argv, "b:fj:m:p:")) != -1) {
 		switch (ch) {
 		case 'b':
 			ip = optarg;
@@ -72,12 +70,6 @@ main(int argc, char *argv[])
 			join_node = optarg;
 			break;
 		case 'm':
-			if (!strcmp(optarg, "index"))
-				cyon_mode = CYON_MODE_INDEX;
-			else if (!strcmp(optarg, "storage"))
-				cyon_mode = CYON_MODE_STORAGE;
-			else
-				fatal("invalid mode: %s", optarg);
 			break;
 		case 'p':
 			port = cyon_strtonum(optarg, 1, 65535, &err);
@@ -93,9 +85,6 @@ main(int argc, char *argv[])
 
 	argc -= optind;
 	argv += optind;
-
-	if (cyon_mode == CYON_MODE_STORAGE && join_node == NULL)
-		fatal("specify an index node to join (-j)");
 
 	cyon_log_init();
 	cyon_mem_init();
@@ -114,6 +103,11 @@ main(int argc, char *argv[])
 	signal(SIGINT, cyon_signal);
 	signal(SIGHUP, cyon_signal);
 	signal(SIGPIPE, SIG_IGN);
+
+	if (join_node != NULL) {
+		if (!cyon_cluster_join(join_node))
+			fatal("could not join cluster node %s", join_node);
+	}
 
 	last_store_write = cyon_time_ms();
 	cyon_log(LOG_NOTICE, "server ready on %s:%d", ip, port);

@@ -64,6 +64,11 @@ void		fatal(const char *, ...);
 /* Server stuff only. */
 #if defined(CYON_SERVER)
 
+#define CYON_CLUSTER_OP_JOIN			1
+#define CYON_CLUSTER_OP_LEAVE			2
+#define CYON_CLUSTER_OP_INFORM_SPACE		3
+#define CYON_CLUSTER_OP_INFORM_NODELIST		4
+
 #if defined(DEBUG)
 #define cyon_debug(fmt, ...)		\
 	cyon_debug_internal(__FILE__, __LINE__, fmt, ##__VA_ARGS__)
@@ -181,6 +186,8 @@ int		cyon_store_write(void);
 int		cyon_store_del(u_int8_t *, u_int32_t);
 int		cyon_store_put(u_int8_t *, u_int32_t, u_int8_t *, u_int32_t);
 int		cyon_store_get(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);
+
+int		cyon_cluster_join(const char *);
 
 #endif /* CYON_SERVER */
 
