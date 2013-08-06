@@ -27,7 +27,6 @@
 volatile sig_atomic_t	sig_recv;
 
 struct listener		server;
-char			*join_node;
 extern const char	*__progname;
 SSL_CTX			*ssl_ctx = NULL;
 u_int64_t		last_store_write;
@@ -56,18 +55,14 @@ main(int argc, char *argv[])
 	port = 3331;
 	foreground = 0;
 	ip = "127.0.0.1";
-	join_node = NULL;
 
-	while ((ch = getopt(argc, argv, "b:fj:m:p:")) != -1) {
+	while ((ch = getopt(argc, argv, "b:fm:p:")) != -1) {
 		switch (ch) {
 		case 'b':
 			ip = optarg;
 			break;
 		case 'f':
 			foreground = 1;
-			break;
-		case 'j':
-			join_node = optarg;
 			break;
 		case 'm':
 			break;
@@ -103,11 +98,6 @@ main(int argc, char *argv[])
 	signal(SIGINT, cyon_signal);
 	signal(SIGHUP, cyon_signal);
 	signal(SIGPIPE, SIG_IGN);
-
-	if (join_node != NULL) {
-		if (!cyon_cluster_join(join_node))
-			fatal("could not join cluster node %s", join_node);
-	}
 
 	last_store_write = cyon_time_ms();
 	cyon_log(LOG_NOTICE, "server ready on %s:%d", ip, port);

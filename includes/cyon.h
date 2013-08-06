@@ -187,8 +187,6 @@ int		cyon_store_del(u_int8_t *, u_int32_t);
 int		cyon_store_put(u_int8_t *, u_int32_t, u_int8_t *, u_int32_t);
 int		cyon_store_get(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);
 
-int		cyon_cluster_join(const char *);
-
 #endif /* CYON_SERVER */
 
 #endif /* !_H_CYON_H */
