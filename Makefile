@@ -2,7 +2,7 @@
 
 CC=gcc
 
-S_SRC=	src/cyon.c src/connection.c src/net.c src/mem.c \
+S_SRC=	src/cyon.c src/cluster.c src/connection.c src/net.c src/mem.c \
 	src/shared.c src/store.c src/utils.c src/linux.c
 S_OBJS=	$(S_SRC:.c=.o)
 
@@ -16,7 +16,7 @@ LDFLAGS+=-lssl -lcrypto
 
 all:
 	make cyon-server
-	rm src/shared.o
+	rm -f src/shared.o
 	make cyon-cli
 
 cyon-server: $(S_SRC)

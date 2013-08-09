@@ -1,40 +1,55 @@
-no-index clustering
-===================
-	- nodes can join/leave at any time
-	- nodes have maximum store size set (-m 8 (always in GB) for example)
-	- Each node informs their other known nodes of following:
-		- (1 sec) Space in store that is available
-			- Acts as a PING, if nothing from a node is received
-			  in 10 seconds the node is considered dead.
-		- (10 seconds) Exchange known nodes (to complete list of nodes)
-	- On PUT, node selects 2 suitable nodes to hold copies of key.
-		- How do we prevent 2 nodes from inserting same keys
-		  at the same time? This is an issue.
-		- Done after we notify issuer the PUT is successfull
-		  (we don't want to block insertation from a caller pov).
-	- On GET, if key is not known ask other nodes for it.
-		- This can become slow if amount of nodes grows?
-	- When a node writes its store to disk, check if certain keys
-	  have copies available. Otherwise we must issue copies if possible.
+Clustering mechanics
+====================
 
-	If a key has copies, flag NODE_DATA_HASCOPIES is set (0x10). This
-	indicates that the region holds a struct key_copy after the data
-	of the key.
+All node servers a single threaded processes with event based I/O.
+(provides serialization in its operations).
 
-	If key is a copy, flag NODE_DATA_ISCOPY is set (0x20) this indicates
-	to the node that it must NOT replicate this copy further. When this
-	flag is set the region will hold an u_int32_t extra after the offset
-	of the data to indicate the original owner of this key.
+If node B has neighbour nodes C and D, C and D do not know they are neighbour
+for node B specifically. (Until at least B sends a REPL to them).
 
-	How do we store what nodes have copies of a key? Add it to region?
-		struct key_copy {
-			u_int32_t	nodes[3];
-		};
+Existing cluster:	B, C, D
 
-		if (node->flags & NODE_DATA_HASCOPIES) {
-			nodes = ... node->region ...
-		}
+New node A joins existing node B:
+	# cyon-server -s node_a -j node-b.coders.se
 
-cyon_cluster_join(pass, node);
-cyon_cluster_inform(message, content);
-cyon_cluster_recv();
+	- A connects and auths to B
+	- B sends A a list of all its known nodes (C, D)
+	- A selects 2 neighbours from the received nodes and connects to them
+	- A marks B as a neighbour node as well
+
+Imaging scenario:
+	|-----------------|
+	A -----> B -----> C <---- D
+	|        |----------------|
+	|-------------------------|
+
+	UPDATEIDX:
+		- Has a timestamp and key attached to it
+		- Nodes will not replace existing keys with newer timestamp
+
+	PUT happens on B node (key=113):
+		- B adds the content
+			- B emits UPDATEIDX for key, with its own timestamp
+			- B has 2 neighbours: A, C
+				- B emits REPL to A
+				- B emits REPL to C
+		- A receives content, adds it to the store
+			- A emits UPDATEIDX for key, with timestamp from B
+		- C receives content, adds it to the store
+			- C emits UPDATEIDX for key, with timestamp from B
+
+	GET happens on C node (key=113):
+		- C looks in its storeindex, finds key=113 and sees it
+		  holds the contents itself
+		- C returns content to caller
+
+	GET happens on D node (key=113) (D does not have content):
+		- D looks in its storeindex, finds key=113 and sees the
+		  content is available at A, B, C
+
+	If node C dies, D lost its neighbour:
+		- D notices that C is gone and from existing nodes
+		  elects a new neighbour to replace it
+
+PUT on node B, but node B is full:
+	- What to do?

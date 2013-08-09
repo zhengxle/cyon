@@ -264,12 +264,15 @@ cyon_store_write(void)
 	u_char		hash[SHA256_DIGEST_LENGTH];
 	char		fpath[MAXPATHLEN], tpath[MAXPATHLEN];
 
+	if (rnode == NULL)
+		return (CYON_RESULT_OK);
+
 	snprintf(fpath, sizeof(fpath), "%s/%s", storepath, CYON_STORE_FILE);
 	snprintf(tpath, sizeof(tpath), "%s/%s", storepath, CYON_STORE_TMPFILE);
 
 	fd = open(tpath, O_CREAT | O_TRUNC | O_WRONLY, 0700);
 	if (fd == -1) {
-		cyon_debug("open(%s): %d", tfile, errno);
+		cyon_debug("open(%s): %d", tpath, errno);
 		return (CYON_RESULT_ERROR);
 	}
 

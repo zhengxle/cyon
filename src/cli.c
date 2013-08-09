@@ -218,9 +218,15 @@ void
 cyon_connect(void)
 {
 	int			r;
+	char			*port;
 	struct addrinfo		*res, *results;
 
-	r = getaddrinfo(host, "3331", NULL, &results);
+	if ((port = strchr(host, ':')) != NULL)
+		*(port)++ = '\0';
+	else
+		port = "3331";
+
+	r = getaddrinfo(host, port, NULL, &results);
 	if (r != 0)
 		fatal("%s", gai_strerror(r));
 

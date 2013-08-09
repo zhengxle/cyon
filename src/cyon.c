@@ -50,21 +50,26 @@ main(int argc, char *argv[])
 	char		*ip;
 	u_int64_t	now;
 	u_int16_t	port;
+	char		*jnode;
 	int		ch, err;
 	u_int8_t	foreground;
 
 	port = 3331;
+	jnode = NULL;
 	foreground = 0;
 	storepath = NULL;
 	ip = "127.0.0.1";
 
-	while ((ch = getopt(argc, argv, "b:fp:s:")) != -1) {
+	while ((ch = getopt(argc, argv, "b:fj:p:s:")) != -1) {
 		switch (ch) {
 		case 'b':
 			ip = optarg;
 			break;
 		case 'f':
 			foreground = 1;
+			break;
+		case 'j':
+			jnode = optarg;
 			break;
 		case 'p':
 			port = cyon_strtonum(optarg, 1, 65535, &err);
@@ -94,9 +99,13 @@ main(int argc, char *argv[])
 	cyon_log_init();
 	cyon_mem_init();
 	cyon_ssl_init();
+	cyon_cluster_init();
 	cyon_connection_init();
 	cyon_server_bind(&server, ip, port);
 	cyon_platform_event_init();
+
+	if (jnode != NULL)
+		cyon_cluster_join(jnode);
 
 	if (foreground == 0 && daemon(1, 1) == -1) {
 		fprintf(stderr, "could not forkify(): %s", errno_s);

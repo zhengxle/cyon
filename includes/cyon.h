@@ -64,10 +64,10 @@ void		fatal(const char *, ...);
 /* Server stuff only. */
 #if defined(CYON_SERVER)
 
-#define CYON_CLUSTER_OP_JOIN			1
-#define CYON_CLUSTER_OP_LEAVE			2
-#define CYON_CLUSTER_OP_INFORM_SPACE		3
-#define CYON_CLUSTER_OP_INFORM_NODELIST		4
+#define CYON_OP_IMANODE		8
+#define CYON_OP_REPL		9
+
+#define DEBUG		1
 
 #if defined(DEBUG)
 #define cyon_debug(fmt, ...)		\
@@ -75,9 +75,6 @@ void		fatal(const char *, ...);
 #else
 #define cyon_debug(fmt, ...)
 #endif
-
-#define CYON_MODE_INDEX		0
-#define CYON_MODE_STORAGE	1
 
 #define STORE_KLEN_OFFSET(b)		((b + sizeof(struct cyon_op)))
 #define STORE_DLEN_OFFSET(b)		((b + sizeof(struct cyon_op) + 4))
@@ -114,6 +111,7 @@ struct netbuf {
 #define CONN_READ_POSSIBLE		0x01
 #define CONN_WRITE_POSSIBLE		0x02
 #define CONN_AUTHENTICATED		0x10
+#define CONN_IS_NODE			0x20
 
 struct listener {
 	int			fd;
@@ -187,6 +185,10 @@ int		cyon_store_write(void);
 int		cyon_store_del(u_int8_t *, u_int32_t);
 int		cyon_store_put(u_int8_t *, u_int32_t, u_int8_t *, u_int32_t);
 int		cyon_store_get(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);
+
+void		cyon_cluster_init(void);
+void		cyon_cluster_join(const char *);
+void		cyon_cluster_node_register(struct connection *);
 
 #endif /* CYON_SERVER */
 
