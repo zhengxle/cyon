@@ -51,5 +51,14 @@ Imaging scenario:
 		- D notices that C is gone and from existing nodes
 		  elects a new neighbour to replace it
 
+Routing:
+	Nodes can route messages through other nodes using NODEMSG.
+
+	struct nodemsg {
+		u_int64_t	source;
+		u_int64_t	destination;
+		struct cyon_op	packet;
+	};
+
 PUT on node B, but node B is full:
 	- What to do?
