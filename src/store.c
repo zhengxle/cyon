@@ -361,7 +361,7 @@ cyon_store_write(void)
 	cyon_atomic_write(fd, &header, sizeof(header), CYON_ADD_CHECKSUM);
 	if (header.flags & STORE_HAS_PASSPHRASE) {
 		cyon_atomic_write(fd, store_passphrase,
-		    SHA_DIGEST_LENGTH, CYON_ADD_CHECKSUM);
+		    SHA256_DIGEST_LENGTH, CYON_ADD_CHECKSUM);
 	}
 
 	if (store_nowrite == 0) {
@@ -475,9 +475,9 @@ cyon_store_map(void)
 	cyon_atomic_read(fd, &header, sizeof(header), CYON_ADD_CHECKSUM);
 
 	if (header.flags & STORE_HAS_PASSPHRASE) {
-		store_passphrase = cyon_malloc(SHA_DIGEST_LENGTH);
+		store_passphrase = cyon_malloc(SHA256_DIGEST_LENGTH);
 		cyon_atomic_read(fd, store_passphrase,
-		    SHA_DIGEST_LENGTH, CYON_ADD_CHECKSUM);
+		    SHA256_DIGEST_LENGTH, CYON_ADD_CHECKSUM);
 	}
 
 	if (store_nowrite == 0) {
