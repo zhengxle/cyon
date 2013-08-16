@@ -67,8 +67,6 @@ void		fatal(const char *, ...);
 #define CYON_OP_IMANODE		8
 #define CYON_OP_REPL		9
 
-#define DEBUG		1
-
 #if defined(DEBUG)
 #define cyon_debug(fmt, ...)		\
 	cyon_debug_internal(__FILE__, __LINE__, fmt, ##__VA_ARGS__)

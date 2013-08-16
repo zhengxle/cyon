@@ -84,9 +84,9 @@ main(int argc, char *argv[])
 	int			r;
 	size_t			len;
 	struct cyon_op		*op, ret;
-	SHA256_CTX		sha256ctx;
+	SHA_CTX			shactx;
 	u_int8_t		count, i, authpwd, *p;
-	u_char			hash[SHA256_DIGEST_LENGTH];
+	u_char			hash[SHA_DIGEST_LENGTH];
 	char			*input, **ap, *args[10];
 
 	authpwd = 0;
@@ -117,19 +117,19 @@ main(int argc, char *argv[])
 		if ((input = getpass("passphrase: ")) == NULL)
 			fatal("could not read passphrase");
 
-		SHA256_Init(&sha256ctx);
-		SHA256_Update(&sha256ctx, input, strlen(input));
-		SHA256_Final(hash, &sha256ctx);
+		SHA_Init(&shactx);
+		SHA_Update(&shactx, input, strlen(input));
+		SHA_Final(hash, &shactx);
 		memset(input, '\0', strlen(input));
 
-		len = sizeof(struct cyon_op) + SHA256_DIGEST_LENGTH;
+		len = sizeof(struct cyon_op) + SHA_DIGEST_LENGTH;
 		if ((p = malloc(len)) == NULL)
 			fatal("malloc(): %s", errno_s);
 
 		op = (struct cyon_op *)p;
 		op->op = CYON_OP_AUTH;
-		net_write32((u_int8_t *)&(op->length), SHA256_DIGEST_LENGTH);
-		memcpy(p + sizeof(struct cyon_op), hash, SHA256_DIGEST_LENGTH);
+		net_write32((u_int8_t *)&(op->length), SHA_DIGEST_LENGTH);
+		memcpy(p + sizeof(struct cyon_op), hash, SHA_DIGEST_LENGTH);
 	} else {
 		len = sizeof(struct cyon_op);
 		if ((p = malloc(len)) == NULL)
@@ -514,24 +514,24 @@ cyon_cli_setauth(u_int8_t argc, char **argv)
 	u_int8_t		*p;
 	u_int32_t		len;
 	struct cyon_op		*op, ret;
-	SHA256_CTX		sha256ctx;
+	SHA_CTX			shactx;
 
 	if (argc != 2) {
 		printf("Usage: set-auth [passphrase]\n");
 		return;
 	}
 
-	len = sizeof(struct cyon_op) + SHA256_DIGEST_LENGTH;
+	len = sizeof(struct cyon_op) + SHA_DIGEST_LENGTH;
 	if ((p = malloc(len)) == NULL)
 		fatal("malloc(): %s", errno_s);
 
 	op = (struct cyon_op *)p;
 	op->op = CYON_OP_SETAUTH;
-	net_write32((u_int8_t *)&(op->length), SHA256_DIGEST_LENGTH);
+	net_write32((u_int8_t *)&(op->length), SHA_DIGEST_LENGTH);
 
-	SHA256_Init(&sha256ctx);
-	SHA256_Update(&sha256ctx, argv[1], strlen(argv[1]));
-	SHA256_Final((u_char *)p + sizeof(struct cyon_op), &sha256ctx);
+	SHA_Init(&shactx);
+	SHA_Update(&shactx, argv[1], strlen(argv[1]));
+	SHA_Final((u_char *)p + sizeof(struct cyon_op), &shactx);
 
 	cyon_ssl_write(p, len);
 
