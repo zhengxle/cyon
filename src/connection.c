@@ -468,11 +468,8 @@ cyon_connection_recv_write(struct connection *c)
 	last_store_write = cyon_time_ms();
 	net_write32((u_int8_t *)&(ret.length), 0);
 
-	if (cyon_store_write())
-		ret.op = CYON_OP_RESULT_OK;
-	else
-		ret.op = CYON_OP_RESULT_ERROR;
-
+	cyon_storewrite_start();
+	ret.op = CYON_OP_RESULT_OK;
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
 }
 

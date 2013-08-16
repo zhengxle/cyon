@@ -63,16 +63,9 @@ fatal(const char *fmt, ...)
 	va_end(args);
 
 #if defined(CYON_SERVER)
-	cyon_log(LOG_ALERT, "cyon encountered a fatal error:");
-	cyon_log(LOG_ALERT, "'%s'", buf);
-	cyon_log(LOG_ALERT, "attempting to save store to disk");
-	if (!cyon_store_write()) {
-		cyon_log(LOG_ALERT,
-		    "store NOT saved to disk, DATA LOSS POSSIBLE");
-	} else {
-		cyon_log(LOG_ALERT,
-		    "store was successfully saved to disk");
-	}
+	cyon_log(LOG_ALERT, "fatal: %s", buf);
+	if (!server_started)
+		printf("cyon-server: %s\n", buf);
 #else
 	printf("cyon: %s\n", buf);
 #endif

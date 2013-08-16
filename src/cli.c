@@ -475,9 +475,9 @@ cyon_cli_write(u_int8_t argc, char **argv)
 	memset(&op, 0, sizeof(op));
 	cyon_ssl_read(&op, sizeof(op));
 	if (op.op == CYON_OP_RESULT_OK)
-		printf("Store successfully written to disk.\n");
+		printf("Ok starting a write, check logs for result.\n");
 	else
-		printf("An error occured while writing store to disk.\n");
+		printf("Unexpected result from store write.\n");
 }
 
 void

@@ -1,5 +1,0 @@
-- WRITE
-	Allow admin to pass a path where Cyon will write the contents of
-	the store too. This can be wanted when the disk Cyon is writing
-	to breaks. It allows an admin to dump Cyon's store somewhere else
-	in order to not lose any data.

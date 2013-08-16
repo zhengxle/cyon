@@ -38,11 +38,11 @@
 #define CYON_NO_CHECKSUM		0
 #define CYON_ADD_CHECKSUM		1
 
+#define CYON_LOG_FILE			"cyon.log"
 #define CYON_STORE_FILE			"cyon.store"
 #define CYON_STORE_TMPFILE		"cyon.store.tmp"
 
 #define NODE_FLAG_HASDATA		0x01
-
 #define STORE_HAS_PASSPHRASE		0x01
 
 struct node {
@@ -52,38 +52,78 @@ struct node {
 	u_int8_t	*region;
 } __attribute__((__packed__));
 
-static int		cyon_store_map(void);
-static int		cyon_atomic_read(int, void *, u_int32_t, int);
-static int		cyon_atomic_write(int, void *, u_int32_t, int);
-static int		cyon_store_mapnode(int, struct node *);
+struct store_header {
+	u_int8_t	flags;
+	u_int64_t	offset;
+} __attribute__((__packed__));
+
+static const u_int8_t	store_log_magic[] = { 0x43, 0x59, 0x4F, 0x4E };
+
+struct store_log {
+	u_int8_t	magic[4];
+	u_int8_t	hash[SHA_DIGEST_LENGTH];
+
+	u_int8_t	op;
+	u_int32_t	klen;
+	u_int32_t	dlen;
+} __attribute__((__packed__));
+
+static void		cyon_store_map(void);
+static void		cyon_storelog_replay(struct store_header *);
+static void		cyon_atomic_read(int, void *, u_int32_t, int);
+static void		cyon_atomic_write(int, void *, u_int32_t, int);
+static void		cyon_store_mapnode(int, struct node *);
 static struct node	*cyon_node_lookup(u_int8_t *, u_int32_t);
-static int		cyon_store_writenode(int, struct node *,
+static void		cyon_store_writenode(int, struct node *,
 			    u_int8_t *, u_int32_t, u_int32_t, u_int32_t *);
+static void		cyon_storelog_write(u_int8_t, u_int8_t *, u_int32_t,
+			    u_int8_t *, u_int32_t);
 
 u_int64_t		key_count;
 char			*storepath;
+u_int8_t		store_nowrite;
 u_char			*store_passphrase;
 
+static int		lfd;
 static struct node	*rnode;
-static SHA256_CTX	sha256ctx;
+static SHA_CTX		shactx;
+static u_int64_t	store_log_offset;
+static u_int8_t		replaying_log = 0;
+static u_int8_t		log_modified = 0;
 
 void
 cyon_store_init(void)
 {
+	struct stat	st;
+	char		fpath[MAXPATHLEN];
+
+	lfd = -1;
 	rnode = NULL;
 	key_count = 0;
+	store_log_offset = 0;
 	store_passphrase = NULL;
 
-	if (!cyon_store_map())
-		fatal("could not load store file");
+	cyon_store_map();
 
 	if (rnode == NULL) {
-		cyon_log(LOG_NOTICE, "starting new store");
+		printf("cyon: store is empty, starting new store\n");
 		rnode = cyon_malloc(sizeof(struct node));
 		memset(rnode, 0, sizeof(struct node));
 	} else {
-		cyon_log(LOG_NOTICE,
-		    "store loaded from disk: %ld keys", key_count);
+		printf("cyon: store loaded from disk with %ld keys\n",
+		    key_count);
+	}
+
+	if (!store_nowrite) {
+		snprintf(fpath, sizeof(fpath),
+		    "%s/%s", storepath, CYON_LOG_FILE);
+		lfd = open(fpath, O_CREAT | O_APPEND | O_WRONLY, 0700);
+		if (lfd == -1)
+			fatal("could not open logfile: %s", errno_s);
+		if (fstat(lfd, &st) == -1)
+			fatal("fstat(lfd): %s", errno_s);
+
+		store_log_offset = st.st_size;
 	}
 }
 
@@ -134,6 +174,9 @@ cyon_store_del(u_int8_t *key, u_int32_t len)
 
 		cyon_mem_free(old);
 	}
+
+	if (!replaying_log && !store_nowrite)
+		cyon_storelog_write(CYON_OP_DEL, key, len, NULL, 0);
 
 	return (CYON_RESULT_OK);
 }
@@ -251,116 +294,114 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 	}
 
 	key_count++;
+	if (!replaying_log && !store_nowrite)
+		cyon_storelog_write(CYON_OP_PUT, key, len, data, dlen);
 
 	return (CYON_RESULT_OK);
 }
 
-int
+void
+cyon_storelog_flush(void)
+{
+	int		ret;
+
+	if (log_modified == 0)
+		return;
+
+	for (;;) {
+		ret = fsync(lfd);
+		if (ret == -1 && errno == EINTR)
+			continue;
+		if (ret == -1)
+			cyon_log(LOG_WARNING, "log sync failed: %s", errno_s);
+		break;
+	}
+}
+
+pid_t
 cyon_store_write(void)
 {
-	int		fd, ret;
-	u_int8_t	*buf, flags;
-	u_int32_t	len, blen, mlen;
-	u_char		hash[SHA256_DIGEST_LENGTH];
-	char		fpath[MAXPATHLEN], tpath[MAXPATHLEN];
+	pid_t			pid;
+	u_int8_t		*buf;
+	struct store_header	header;
+	int			fd, ret;
+	u_int32_t		len, blen, mlen;
+	u_char			hash[SHA_DIGEST_LENGTH];
+	char			fpath[MAXPATHLEN], tpath[MAXPATHLEN];
 
 	if (rnode == NULL)
 		return (CYON_RESULT_OK);
+
+	pid = fork();
+	if (pid == -1) {
+		cyon_log(LOG_NOTICE,
+		    "store write not started (fork: %s)", errno_s);
+		return (CYON_RESULT_ERROR);
+	}
+
+	if (pid != 0) {
+		cyon_log(LOG_NOTICE, "store write started (%d)", pid);
+		return (pid);
+	}
 
 	snprintf(fpath, sizeof(fpath), "%s/%s", storepath, CYON_STORE_FILE);
 	snprintf(tpath, sizeof(tpath), "%s/%s", storepath, CYON_STORE_TMPFILE);
 
 	fd = open(tpath, O_CREAT | O_TRUNC | O_WRONLY, 0700);
-	if (fd == -1) {
-		cyon_debug("open(%s): %d", tpath, errno);
-		return (CYON_RESULT_ERROR);
-	}
+	if (fd == -1)
+		fatal("open(%s): %s", tpath, errno_s);
 
-	SHA256_Init(&sha256ctx);
-
-	flags = 0;
+	memset(&header, 0, sizeof(header));
 	if (store_passphrase != NULL)
-		flags = STORE_HAS_PASSPHRASE;
+		header.flags |= STORE_HAS_PASSPHRASE;
+	if (lfd != -1)
+		header.offset = store_log_offset;
 
-	if (!cyon_atomic_write(fd, &flags, sizeof(flags), CYON_ADD_CHECKSUM)) {
-		close(fd);
-		unlink(tpath);
-		return (CYON_RESULT_ERROR);
+	SHA_Init(&shactx);
+	cyon_atomic_write(fd, &header, sizeof(header), CYON_ADD_CHECKSUM);
+	if (header.flags & STORE_HAS_PASSPHRASE) {
+		cyon_atomic_write(fd, store_passphrase,
+		    SHA_DIGEST_LENGTH, CYON_ADD_CHECKSUM);
 	}
 
-	if (flags & STORE_HAS_PASSPHRASE) {
-		if (!cyon_atomic_write(fd, store_passphrase,
-		    SHA256_DIGEST_LENGTH, CYON_ADD_CHECKSUM)) {
-			close(fd);
-			unlink(tpath);
-			return (CYON_RESULT_ERROR);
-		}
-	}
+	if (store_nowrite == 0) {
+		len = 0;
+		blen = 128 * 1024 * 1024;
+		buf = cyon_malloc(blen);
+		mlen = sizeof(struct node);
 
-	len = 0;
-	blen = 128 * 1024 * 1024;
-	buf = cyon_malloc(blen);
-	mlen = sizeof(struct node);
+		cyon_store_writenode(fd, rnode, buf, blen, mlen, &len);
+		if (len > 0)
+			cyon_atomic_write(fd, buf, len, CYON_ADD_CHECKSUM);
 
-	if (!cyon_store_writenode(fd, rnode, buf, blen, mlen, &len)) {
 		cyon_mem_free(buf);
-		close(fd);
-		unlink(tpath);
-		return (CYON_RESULT_ERROR);
 	}
 
-	if (len > 0) {
-		if (!cyon_atomic_write(fd, buf, len, CYON_ADD_CHECKSUM)) {
-			cyon_mem_free(buf);
-			close(fd);
-			unlink(tpath);
-			return (CYON_RESULT_ERROR);
-		}
-	}
+	SHA_Final(hash, &shactx);
+	cyon_atomic_write(fd, hash, SHA_DIGEST_LENGTH, CYON_NO_CHECKSUM);
 
-	SHA256_Final(hash, &sha256ctx);
-
-	if (!cyon_atomic_write(fd, hash,
-	    SHA256_DIGEST_LENGTH, CYON_NO_CHECKSUM)) {
-		cyon_mem_free(buf);
-		close(fd);
-		unlink(tpath);
-		return (CYON_RESULT_ERROR);
-	}
-
-	cyon_mem_free(buf);
-
-	cyon_log(LOG_NOTICE, "flushing store...");
 	for (;;) {
 		ret = fsync(fd);
 		if (ret == -1 && errno == EINTR)
 			continue;
-		if (ret == -1) {
-			close(fd);
-			cyon_debug("fsync(): %d, aborting!", errno);
-			unlink(tpath);
-			return (CYON_RESULT_ERROR);
-		}
+		if (ret == -1)
+			fatal("store write failed #6");
 
 		break;
 	}
 
 	close(fd);
 
-	if (rename(tpath, fpath) == -1) {
-		cyon_debug("cannot move store into place: %d", errno);
-		unlink(tpath);
-		return (CYON_RESULT_ERROR);
-	}
+	if (rename(tpath, fpath) == -1)
+		fatal("cannot move store into place: %s", errno_s);
 
-	return (CYON_RESULT_OK);
+	exit(0);
 }
 
-static int
+static void
 cyon_store_writenode(int fd, struct node *p, u_int8_t *buf, u_int32_t blen,
     u_int32_t mlen, u_int32_t *len)
 {
-	int			r;
 	struct node		*np;
 	u_int32_t		offset, i, rlen;
 
@@ -377,10 +418,7 @@ cyon_store_writenode(int fd, struct node *p, u_int8_t *buf, u_int32_t blen,
 	}
 
 	if ((*len + mlen) > (blen + rlen)) {
-		if (!cyon_atomic_write(fd,
-		    buf, *len, CYON_ADD_CHECKSUM))
-			return (CYON_RESULT_ERROR);
-
+		cyon_atomic_write(fd, buf, *len, CYON_ADD_CHECKSUM);
 		*len = 0;
 	}
 
@@ -390,129 +428,202 @@ cyon_store_writenode(int fd, struct node *p, u_int8_t *buf, u_int32_t blen,
 	}
 
 	if (p->region == NULL)
-		return (CYON_RESULT_OK);
+		return;
 
 	memcpy(buf + *len, p->region, rlen);
 	*len += rlen;
 
 	if (p->rtop == 0 && p->rbase == 0)
-		return (CYON_RESULT_OK);
+		return;
 
-	r = CYON_RESULT_OK;
 	rlen = (p->rtop - p->rbase) + 1;
 	for (i = 0; i < rlen; i++) {
 		np = (struct node *)((u_int8_t *)p->region + offset +
 		    (i * sizeof(struct node)));
 
-		r = cyon_store_writenode(fd, np, buf, blen, mlen, len);
-		if (r == CYON_RESULT_ERROR)
-			break;
+		cyon_store_writenode(fd, np, buf, blen, mlen, len);
 	}
-
-	return (r);
 }
 
-static int
+static void
 cyon_store_map(void)
 {
-	struct stat	st;
-	int		fd;
-	u_int8_t	flags;
-	char		fpath[MAXPATHLEN];
-	u_char		hash[SHA256_DIGEST_LENGTH];
-	u_char		ohash[SHA256_DIGEST_LENGTH];
+	struct stat		st;
+	int			fd;
+	struct store_header	header;
+	char			fpath[MAXPATHLEN];
+	u_char			hash[SHA_DIGEST_LENGTH];
+	u_char			ohash[SHA_DIGEST_LENGTH];
 
 	snprintf(fpath, sizeof(fpath), "%s/%s", storepath, CYON_STORE_FILE);
 	if ((fd = open(fpath, O_RDONLY)) == -1) {
-		if (errno != ENOENT) {
-			cyon_debug("open(%s): %s", fpath, errno);
-			return (CYON_RESULT_ERROR);
-		}
+		if (errno != ENOENT)
+			fatal("open(%s): %s", fpath, errno_s);
 
-		return (CYON_RESULT_OK);
+		memset(&header, 0, sizeof(header));
+		cyon_storelog_replay(&header);
+		return;
 	}
 
-	if (fstat(fd, &st) == -1) {
-		cyon_debug("fstat(): %d", errno);
-		close(fd);
-		return (CYON_RESULT_ERROR);
+	if (fstat(fd, &st) == -1)
+		fatal("cyon_store_map(): fstat(): %s", errno_s);
+
+	cyon_log(LOG_NOTICE, "starting store map");
+
+	SHA_Init(&shactx);
+	memset(&header, 0, sizeof(header));
+	cyon_atomic_read(fd, &header, sizeof(header), CYON_ADD_CHECKSUM);
+
+	if (header.flags & STORE_HAS_PASSPHRASE) {
+		store_passphrase = cyon_malloc(SHA_DIGEST_LENGTH);
+		cyon_atomic_read(fd, store_passphrase,
+		    SHA_DIGEST_LENGTH, CYON_ADD_CHECKSUM);
 	}
 
-	SHA256_Init(&sha256ctx);
-
-	if (!cyon_atomic_read(fd, &flags, sizeof(flags), CYON_ADD_CHECKSUM)) {
-		close(fd);
-		return (CYON_RESULT_ERROR);
+	if (store_nowrite == 0) {
+		rnode = cyon_malloc(sizeof(struct node));
+		cyon_atomic_read(fd, rnode,
+		    sizeof(struct node), CYON_ADD_CHECKSUM);
+		cyon_store_mapnode(fd, rnode);
 	}
 
-	if (flags & STORE_HAS_PASSPHRASE) {
-		store_passphrase = cyon_malloc(SHA256_DIGEST_LENGTH);
-		if (!cyon_atomic_read(fd, store_passphrase,
-		    SHA256_DIGEST_LENGTH, CYON_ADD_CHECKSUM)) {
-			close(fd);
-			free(store_passphrase);
-			store_passphrase = NULL;
-			return (CYON_RESULT_ERROR);
-		}
-	}
-
-	rnode = cyon_malloc(sizeof(struct node));
-	if (!cyon_atomic_read(fd, rnode,
-	    sizeof(struct node), CYON_ADD_CHECKSUM)) {
-		close(fd);
-		cyon_mem_free(rnode);
-		return (CYON_RESULT_ERROR);
-	}
-
-	if (!cyon_store_mapnode(fd, rnode)) {
-		close(fd);
-		cyon_mem_free(rnode);
-		return (CYON_RESULT_ERROR);
-	}
-
-	SHA256_Final(hash, &sha256ctx);
-
-	if (!cyon_atomic_read(fd, ohash,
-	    sizeof(ohash), CYON_NO_CHECKSUM)) {
-		close(fd);
-		cyon_mem_free(rnode);
-		return (CYON_RESULT_ERROR);
-	}
+	SHA_Final(hash, &shactx);
+	cyon_atomic_read(fd, ohash, sizeof(ohash), CYON_NO_CHECKSUM);
 
 	close(fd);
 
-	if (memcmp(hash, ohash, SHA256_DIGEST_LENGTH)) {
-		cyon_debug("SHA256 checksum mismatch, store corrupted?");
-		cyon_mem_free(rnode);
-		return (CYON_RESULT_ERROR);
-	}
+	if (memcmp(hash, ohash, SHA_DIGEST_LENGTH))
+		fatal("SHA1 checksum mismatch, store corrupted?");
 
-	return (CYON_RESULT_OK);
+	cyon_storelog_replay(&header);
 }
 
-static int
+static void
+cyon_storelog_replay(struct store_header *header)
+{
+	struct stat		st;
+	struct store_log	slog;
+	u_int8_t		*buf;
+	u_int64_t		len, olen;
+	u_int8_t		*key, *data;
+	u_int64_t		added, removed;
+	char			fpath[MAXPATHLEN];
+	u_char			hash[SHA_DIGEST_LENGTH];
+
+	snprintf(fpath, sizeof(fpath), "%s/%s", storepath, CYON_LOG_FILE);
+	if ((lfd = open(fpath, O_RDONLY)) == -1) {
+		if (errno == ENOENT)
+			return;
+
+		fatal("open(%s): %s", fpath, errno_s);
+	}
+
+	if (fstat(lfd, &st) == -1)
+		fatal("fstat(): %s", errno_s);
+
+	if (header->offset > (u_int64_t)st.st_size) {
+		fatal("logfile corruption? off: %ld > size: %ld",
+		    header->offset, st.st_size);
+	}
+
+	if (header->offset == (u_int64_t)st.st_size) {
+		close(lfd);
+		return;
+	}
+
+	cyon_log(LOG_NOTICE, "applying logfile to store from offset %ld",
+	    header->offset);
+
+	if (lseek(lfd, header->offset, SEEK_SET) == -1)
+		fatal("lseek() on logfile failed: %s", errno_s);
+
+	olen = 0;
+	buf = NULL;
+	replaying_log = 1;
+	added = removed = 0;
+
+	while (header->offset < (u_int64_t)st.st_size) {
+		cyon_atomic_read(lfd, &slog, sizeof(slog), CYON_NO_CHECKSUM);
+		if (memcmp(slog.magic, store_log_magic, 4))
+			fatal("logfile is corrupted, run repair tool");
+
+		len = slog.klen + slog.dlen + (sizeof(u_int32_t) * 2);
+		if (len > olen) {
+			if (buf != NULL)
+				cyon_mem_free(buf);
+			buf = cyon_malloc(len);
+		}
+
+		olen = len;
+		memcpy(buf, &(slog.klen), sizeof(u_int32_t));
+		memcpy(buf + sizeof(u_int32_t),
+		    &(slog.dlen), sizeof(u_int32_t));
+
+		cyon_atomic_read(lfd, (buf + (sizeof(u_int32_t) * 2)),
+		    slog.klen + slog.dlen, CYON_NO_CHECKSUM);
+
+		SHA_Init(&shactx);
+		SHA_Update(&shactx, buf, len);
+		SHA_Final(hash, &shactx);
+
+		if (memcmp(hash, slog.hash, SHA_DIGEST_LENGTH))
+			fatal("hash is wrong for entry, run repair tool");
+
+		header->offset += sizeof(slog) + slog.klen + slog.dlen;
+
+		key = buf + (sizeof(u_int32_t) * 2);
+		if (slog.dlen > 0)
+			data = buf + (sizeof(u_int32_t) * 2) + slog.klen;
+		else
+			data = NULL;
+
+		if (rnode == NULL) {
+			rnode = cyon_malloc(sizeof(struct node));
+			memset(rnode, 0, sizeof(struct node));
+		}
+
+		switch (slog.op) {
+		case CYON_OP_PUT:
+			if (!cyon_store_put(key, slog.klen, data, slog.dlen))
+				fatal("replay of log failed at this stage?");
+			added++;
+			break;
+		case CYON_OP_DEL:
+			if (!cyon_store_del(key, slog.klen))
+				fatal("replay of log failed at this stage?");
+			removed++;
+			break;
+		default:
+			printf("unknown log operation %d", slog.op);
+			break;
+		}
+	}
+
+	printf("store replay completed: %ld added, %ld removed\n",
+	    added, removed);
+
+	close(lfd);
+	replaying_log = 0;
+}
+
+static void
 cyon_store_mapnode(int fd, struct node *p)
 {
-	int			r;
 	struct node		*np;
 	u_int32_t		rlen, i, offset;
 
-	if (p->rbase > p->rtop) {
-		cyon_debug("corruption in store detected");
-		return (CYON_RESULT_ERROR);
-	}
+	if (p->rbase > p->rtop)
+		fatal("corruption in store detected");
 
 	p->region = NULL;
 	if (!(p->flags & NODE_FLAG_HASDATA) && p->rbase == 0 && p->rtop == 0)
-		return (CYON_RESULT_OK);
+		return;
 
 	if (p->flags & NODE_FLAG_HASDATA) {
 		key_count++;
 
-		if (!cyon_atomic_read(fd, &offset,
-		    sizeof(u_int32_t), CYON_ADD_CHECKSUM))
-			return (CYON_RESULT_ERROR);
-
+		cyon_atomic_read(fd, &offset,
+		    sizeof(u_int32_t), CYON_ADD_CHECKSUM);
 		if (p->rbase != 0 && p->rtop != 0) {
 			rlen = sizeof(u_int32_t) + offset +
 			    (p->rtop - p->rbase + 1) * sizeof(struct node);
@@ -531,30 +642,61 @@ cyon_store_mapnode(int fd, struct node *p)
 		if (p->rbase != 0 && p->rtop != 0) {
 			rlen = (p->rtop - p->rbase + 1) * sizeof(struct node);
 			p->region = cyon_malloc(rlen);
-			if (!cyon_atomic_read(fd,
-			    p->region, rlen, CYON_ADD_CHECKSUM))
-				return (CYON_RESULT_ERROR);
+			cyon_atomic_read(fd,
+			    p->region, rlen, CYON_ADD_CHECKSUM);
 		}
 	}
 
 	if (p->rbase == 0 && p->rtop == 0)
-		return (CYON_RESULT_OK);
+		return;
 
-	r = CYON_RESULT_OK;
 	rlen = (p->rtop - p->rbase) + 1;
 	for (i = 0; i < rlen; i++) {
 		np = (struct node *)((u_int8_t *)p->region + offset +
 		    (i * sizeof(struct node)));
 
-		r = cyon_store_mapnode(fd, np);
-		if (r == CYON_RESULT_ERROR)
-			break;
+		cyon_store_mapnode(fd, np);
 	}
-
-	return (r);
 }
 
-static int
+static void
+cyon_storelog_write(u_int8_t op, u_int8_t *key, u_int32_t klen,
+    u_int8_t *data, u_int32_t dlen)
+{
+	u_int32_t		len;
+	u_int8_t		*buf;
+	struct store_log	slog;
+
+	memset(&slog, 0, sizeof(slog));
+
+	slog.op = op;
+	slog.klen = klen;
+	slog.dlen = dlen;
+	memcpy(slog.magic, store_log_magic, 4);
+
+	len = klen + dlen + (sizeof(u_int32_t) * 2);
+	buf = cyon_malloc(len);
+
+	memcpy(buf, &klen, sizeof(u_int32_t));
+	memcpy(buf + sizeof(u_int32_t), &dlen, sizeof(u_int32_t));
+	memcpy(buf + (sizeof(u_int32_t) * 2), key, klen);
+	if (dlen > 0)
+		memcpy(buf + (sizeof(u_int32_t) * 2) + klen, data, dlen);
+
+	SHA_Init(&shactx);
+	SHA_Update(&shactx, buf, len);
+	SHA_Final(slog.hash, &shactx);
+
+	cyon_atomic_write(lfd, &slog, sizeof(slog), CYON_NO_CHECKSUM);
+	cyon_atomic_write(lfd, buf + (sizeof(u_int32_t) * 2),
+	    len - (sizeof(u_int32_t) * 2), CYON_NO_CHECKSUM);
+
+	log_modified = 1;
+	cyon_mem_free(buf);
+	store_log_offset += sizeof(slog) + (len - (sizeof(u_int32_t) * 2));
+}
+
+static void
 cyon_atomic_write(int fd, void *buf, u_int32_t len, int calc)
 {
 	ssize_t		r;
@@ -567,21 +709,17 @@ cyon_atomic_write(int fd, void *buf, u_int32_t len, int calc)
 		r = write(fd, d + written, len - written);
 		if (r == -1 && errno == EINTR)
 			continue;
-		if (r == -1) {
-			cyon_debug("write(%d): %d\n", len, errno);
-			return (CYON_RESULT_ERROR);
-		}
+		if (r == -1)
+			fatal("cyon_atomic_write(): %s", errno_s);
 
 		written += r;
 	}
 
 	if (calc)
-		SHA256_Update(&sha256ctx, buf, len);
-
-	return (CYON_RESULT_OK);
+		SHA_Update(&shactx, buf, len);
 }
 
-static int
+static void
 cyon_atomic_read(int fd, void *buf, u_int32_t len, int calc)
 {
 	ssize_t		r;
@@ -596,18 +734,14 @@ cyon_atomic_read(int fd, void *buf, u_int32_t len, int calc)
 			continue;
 
 		/* Treat eof (r == 0) as an error. */
-		if (r == -1 || r == 0) {
-			cyon_debug("read(%d): %d\n", len, errno);
-			return (CYON_RESULT_ERROR);
-		}
+		if (r == -1 || r == 0)
+			fatal("cyon_atomic_read(): %s", errno_s);
 
 		done += r;
 	}
 
 	if (calc)
-		SHA256_Update(&sha256ctx, buf, len);
-
-	return (CYON_RESULT_OK);
+		SHA_Update(&shactx, buf, len);
 }
 
 static struct node *

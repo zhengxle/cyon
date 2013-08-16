@@ -80,6 +80,9 @@ void		fatal(const char *, ...);
 #define STORE_DLEN_OFFSET(b)		((b + sizeof(struct cyon_op) + 4))
 #define STORE_KEY_OFFSET(b)		((b + sizeof(struct cyon_op) + 8))
 #define STORE_DATA_OFFSET(b, s)		((STORE_KEY_OFFSET(b) + s))
+
+#define CYON_STORE_WRITE_NOFORK		0
+#define CYON_STORE_WRITE_FORK		1
 #define CYON_STORE_WRITE_INTERVAL	60000
 
 #define NETBUF_RECV		0
@@ -139,9 +142,13 @@ extern u_int64_t		key_count;
 extern char			*storepath;
 extern u_int64_t		last_store_write;
 extern u_char			*store_passphrase;
+extern u_int8_t			store_nowrite;
+extern u_int8_t			server_started;
 
 u_int64_t	cyon_time_ms(void);
 void		cyon_log_init(void);
+void		cyon_storelog_flush(void);
+void		cyon_storewrite_start(void);
 void		cyon_log(int, const char *, ...);
 void		cyon_strlcpy(char *, const char *, size_t);
 void		cyon_debug_internal(char *, int, const char *, ...);
@@ -181,7 +188,7 @@ int		net_send_flush(struct connection *);
 int		net_recv_flush(struct connection *);
 
 void		cyon_store_init(void);
-int		cyon_store_write(void);
+pid_t		cyon_store_write(void);
 int		cyon_store_del(u_int8_t *, u_int32_t);
 int		cyon_store_put(u_int8_t *, u_int32_t, u_int8_t *, u_int32_t);
 int		cyon_store_get(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);

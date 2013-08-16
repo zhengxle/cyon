@@ -17,6 +17,7 @@
 #include <sys/param.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 
 #include <fcntl.h>
 #include <signal.h>
@@ -24,25 +25,37 @@
 
 #include "cyon.h"
 
+static void		usage(void);
+static void		cyon_signal(int);
+static void		cyon_ssl_init(void);
+static void		cyon_storewrite_wait(int);
+static void		cyon_server_bind(struct listener *, char *, u_int16_t);
+
+static struct {
+	int	opt;
+	char	*label;
+	char	*descr;
+} use_options[] = {
+	{ 'b',	"ip",		"Bind to the given IP address" },
+	{ 'f',	NULL,		"Runs cyon in foreground mode" },
+	{ 'j',	"node",		"Join cluster using given node address" },
+	{ 'n',	NULL,		"No data persistence" },
+	{ 'p',	"port",		"Use given port to listen for connections" },
+	{ 's',	"storedir",	"Directory where all data is stored" },
+	{ 'w',	"interval",	"Time in minutes in between store writes" },
+	{ 0,	NULL,		NULL },
+};
+
 volatile sig_atomic_t	sig_recv;
 
 struct listener		server;
 extern const char	*__progname;
 SSL_CTX			*ssl_ctx = NULL;
 u_int64_t		last_store_write;
+u_int8_t		server_started = 0;
 
-static void		usage(void);
-static void		cyon_signal(int);
-static void		cyon_ssl_init(void);
-static void		cyon_server_bind(struct listener *, char *, u_int16_t);
-
-static void
-usage(void)
-{
-	fprintf(stderr,
-	    "Usage: %s [-b ip] [-p port] [-s storepath]\n", __progname);
-	exit(1);
-}
+static pid_t		writepid = -1;
+static u_int32_t	store_write_int = CYON_STORE_WRITE_INTERVAL;
 
 int
 main(int argc, char *argv[])
@@ -53,6 +66,7 @@ main(int argc, char *argv[])
 	char		*jnode;
 	int		ch, err;
 	u_int8_t	foreground;
+	u_int64_t	last_storelog_flush;
 
 	port = 3331;
 	jnode = NULL;
@@ -60,7 +74,7 @@ main(int argc, char *argv[])
 	storepath = NULL;
 	ip = "127.0.0.1";
 
-	while ((ch = getopt(argc, argv, "b:fj:p:s:")) != -1) {
+	while ((ch = getopt(argc, argv, "b:fj:np:s:w:")) != -1) {
 		switch (ch) {
 		case 'b':
 			ip = optarg;
@@ -71,15 +85,22 @@ main(int argc, char *argv[])
 		case 'j':
 			jnode = optarg;
 			break;
+		case 'n':
+			store_nowrite = 1;
+			break;
 		case 'p':
 			port = cyon_strtonum(optarg, 1, 65535, &err);
-			if (err != CYON_RESULT_OK) {
-				fprintf(stderr, "Invalid port: %s\n", optarg);
-				exit(1);
-			}
+			if (err != CYON_RESULT_OK)
+				fatal("Invalid port: %s", optarg);
 			break;
 		case 's':
 			storepath = optarg;
+			break;
+		case 'w':
+			store_write_int = cyon_strtonum(optarg, 0, 254, &err);
+			if (err != CYON_RESULT_OK)
+				fatal("Invalid write interval: %s", optarg);
+			store_write_int = (store_write_int * 60) * 1000;
 			break;
 		case '?':
 		default:
@@ -92,7 +113,7 @@ main(int argc, char *argv[])
 	argv += optind;
 
 	if (storepath == NULL) {
-		fprintf(stderr, "No storepath set\n");
+		fprintf(stderr, "No storedir set\n");
 		usage();
 	}
 
@@ -107,12 +128,9 @@ main(int argc, char *argv[])
 	if (jnode != NULL)
 		cyon_cluster_join(jnode);
 
-	if (foreground == 0 && daemon(1, 1) == -1) {
-		fprintf(stderr, "could not forkify(): %s", errno_s);
-		exit(1);
-	}
-
 	cyon_store_init();
+	if (foreground == 0 && daemon(1, 1) == -1)
+		fatal("could not forkify(): %s", errno_s);
 
 	sig_recv = 0;
 	signal(SIGQUIT, cyon_signal);
@@ -120,37 +138,52 @@ main(int argc, char *argv[])
 	signal(SIGHUP, cyon_signal);
 	signal(SIGPIPE, SIG_IGN);
 
+	server_started = 1;
 	last_store_write = cyon_time_ms();
 	cyon_log(LOG_NOTICE, "server ready on %s:%d", ip, port);
 	for (;;) {
-		if (sig_recv == SIGQUIT) {
-			sig_recv = 0;
-			if (!cyon_store_write()) {
-				cyon_log(LOG_ALERT,
-				    "store error, continuing server");
-				continue;
-			}
-
+		if (sig_recv == SIGQUIT)
 			break;
-		}
 
 		now = cyon_time_ms();
-		if ((now - last_store_write) >= CYON_STORE_WRITE_INTERVAL) {
+		if (writepid == -1 && store_write_int != 0 &&
+		    (now - last_store_write) >= store_write_int) {
 			last_store_write = now;
-			if (!cyon_store_write())
-				cyon_log(LOG_WARNING, "could not write store");
-			else
-				cyon_log(LOG_NOTICE, "store saved to disk");
+			cyon_storewrite_start();
 		}
 
+		if ((now - last_storelog_flush) >= 1) {
+			last_storelog_flush = now;
+			cyon_storelog_flush();
+		}
+
+		cyon_storewrite_wait(0);
 		cyon_platform_event_wait();
 		cyon_connection_prune();
 	}
 
+	if (writepid != -1)
+		cyon_storewrite_wait(1);
+
+	cyon_storewrite_start();
+	cyon_storewrite_wait(1);
 	cyon_connection_disconnect_all();
+
 	cyon_log(LOG_NOTICE, "server stopped");
 
 	return (0);
+}
+
+void
+cyon_storewrite_start(void)
+{
+	if (writepid != -1) {
+		cyon_log(LOG_NOTICE,
+		    "store write still in progress (%d)", writepid);
+		return;
+	}
+
+	writepid = cyon_store_write();
 }
 
 static void
@@ -205,7 +238,62 @@ cyon_server_bind(struct listener *l, char *ip, u_int16_t port)
 }
 
 static void
+cyon_storewrite_wait(int final)
+{
+	pid_t		pid;
+	int		status;
+
+	if (writepid == -1)
+		return;
+
+	if (final)
+		pid = waitpid(writepid, &status, 0);
+	else
+		pid = waitpid(writepid, &status, WNOHANG);
+
+	if (pid == -1) {
+		cyon_log(LOG_NOTICE, "waitpid(): %s", errno_s);
+		return;
+	}
+
+	if (pid == 0)
+		return;
+
+	if (pid != writepid) {
+		cyon_log(LOG_NOTICE,
+		    "waitpid() returned %d, expected %d", pid, writepid);
+		return;
+	}
+
+	if (WEXITSTATUS(status) != 0 ||
+	    WTERMSIG(status) || WCOREDUMP(status)) {
+		cyon_log(LOG_NOTICE,
+		    "store write failed, see log messages (%d)", writepid);
+	} else {
+		cyon_log(LOG_NOTICE,
+		    "store write completed (%d)", writepid);
+	}
+
+	writepid = -1;
+}
+
+static void
 cyon_signal(int sig)
 {
 	sig_recv = sig;
+}
+
+static void
+usage(void)
+{
+	u_int8_t	i;
+
+	printf("Available options for cyon:\n");
+	for (i = 0; use_options[i].descr != NULL; i++) {
+		printf("   -%c %s\t\t%s\n", use_options[i].opt,
+		    (use_options[i].label != NULL) ? use_options[i].label :
+		    "  ", use_options[i].descr);
+	}
+
+	exit(1);
 }

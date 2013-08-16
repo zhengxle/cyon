@@ -53,6 +53,7 @@ void
 cyon_log_init(void)
 {
 	openlog("cyon", LOG_NDELAY | LOG_PID, LOG_DAEMON);
+	cyon_log(LOG_NOTICE, "cyon server starting up...");
 }
 
 void
