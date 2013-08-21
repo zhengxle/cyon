@@ -182,6 +182,43 @@ cyon_store_del(u_int8_t *key, u_int32_t len)
 }
 
 int
+cyon_store_replace(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
+{
+	struct node	*p;
+	u_int8_t	*old;
+	u_int32_t	nlen, rlen, offset;
+
+	if ((p = cyon_node_lookup(key, len)) == NULL)
+		return (CYON_RESULT_ERROR);
+
+	if (!(p->flags & NODE_FLAG_HASDATA))
+		return (CYON_RESULT_ERROR);
+
+	old = p->region;
+	if (p->rbase == 0 && p->rtop == 0) {
+		rlen = 0;
+		offset = 0;
+	} else {
+		offset = sizeof(u_int32_t) + *(u_int32_t *)p->region;
+		rlen = ((p->rtop - p->rbase) + 1) * sizeof(struct node);
+	}
+
+	nlen = sizeof(u_int32_t) + dlen + rlen;
+	p->region = cyon_malloc(nlen);
+
+	*(u_int32_t *)p->region = dlen;
+	memcpy(p->region + sizeof(u_int32_t), data, dlen);
+	if (rlen != 0) {
+		memcpy(p->region + sizeof(u_int32_t) + dlen,
+		    old + offset, rlen);
+	}
+
+	cyon_mem_free(old);
+
+	return (CYON_RESULT_OK);
+}
+
+int
 cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 {
 	struct node		*p;

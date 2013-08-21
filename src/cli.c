@@ -38,10 +38,11 @@ void		fatal(const char *, ...);
 void		cyon_ssl_write(void *, u_int32_t);
 void		cyon_ssl_read(void *, u_int32_t);
 int		cyon_del(u_int8_t *, u_int32_t);
-int		cyon_add(u_int8_t *, u_int32_t, u_int8_t *, u_int32_t);
 int		cyon_get(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);
+int		cyon_upload(u_int8_t, u_int8_t *,
+		    u_int32_t, u_int8_t *, u_int32_t);
 
-void		cyon_cli_put(u_int8_t, char **);
+void		cyon_cli_upload(u_int8_t, char **);
 void		cyon_cli_get(u_int8_t, char **);
 void		cyon_cli_del(u_int8_t, char **);
 void		cyon_cli_quit(u_int8_t, char **);
@@ -60,12 +61,13 @@ struct {
 	void		(*cb)(u_int8_t, char **);
 } cmds[] = {
 	{ "quit",		cyon_cli_quit },
-	{ "put",		cyon_cli_put },
+	{ "put",		cyon_cli_upload },
 	{ "get",		cyon_cli_get },
 	{ "del",		cyon_cli_del },
 	{ "write",		cyon_cli_write },
 	{ "stats",		cyon_cli_stats },
 	{ "set-auth",		cyon_cli_setauth },
+	{ "replace",		cyon_cli_upload },
 	{ NULL,		NULL },
 };
 
@@ -282,7 +284,8 @@ cyon_ssl_read(void *dst, u_int32_t len)
 }
 
 int
-cyon_add(u_int8_t *key, u_int32_t klen, u_int8_t *d, u_int32_t dlen)
+cyon_upload(u_int8_t id, u_int8_t *key, u_int32_t klen,
+    u_int8_t *d, u_int32_t dlen)
 {
 	u_int8_t		*p;
 	struct cyon_op		*op, ret;
@@ -295,7 +298,7 @@ cyon_add(u_int8_t *key, u_int32_t klen, u_int8_t *d, u_int32_t dlen)
 		fatal("malloc(): %s", errno_s);
 
 	op = (struct cyon_op *)p;
-	op->op = CYON_OP_PUT;
+	op->op = id;
 	net_write32((u_int8_t *)&(op->length), flen);
 
 	off = sizeof(struct cyon_op);
@@ -370,15 +373,24 @@ cyon_cli_quit(u_int8_t argc, char **argv)
 }
 
 void
-cyon_cli_put(u_int8_t argc, char **argv)
+cyon_cli_upload(u_int8_t argc, char **argv)
 {
 	ssize_t		r;
 	int		fd;
 	struct stat	st;
-	u_int8_t	*d;
+	u_int8_t	*d, id;
+
+	if (!strcmp(argv[0], "put")) {
+		id = CYON_OP_PUT;
+	} else if (!strcmp(argv[0], "replace")) {
+		id = CYON_OP_REPLACE;
+	} else {
+		printf("invalid\n");
+		return;
+	}
 
 	if (argc != 3) {
-		printf("put [key] [infile]\n");
+		printf("%s [key] [infile]\n", argv[0]);
 		return;
 	}
 
@@ -407,7 +419,7 @@ cyon_cli_put(u_int8_t argc, char **argv)
 		return;
 	}
 
-	if (cyon_add((u_int8_t *)argv[1], strlen(argv[1]), d, st.st_size))
+	if (cyon_upload(id, (u_int8_t *)argv[1], strlen(argv[1]), d, st.st_size))
 		printf("Key was added successfully.\n");
 	else
 		printf("The key was not added successfully.\n");

@@ -37,6 +37,7 @@
 #define CYON_OP_AUTH		5
 #define CYON_OP_SETAUTH		6
 #define CYON_OP_DEL		7
+#define CYON_OP_REPLACE		8
 #define CYON_OP_RESULT_OK	200
 #define CYON_OP_RESULT_ERROR	201
 
@@ -64,8 +65,8 @@ void		fatal(const char *, ...);
 /* Server stuff only. */
 #if defined(CYON_SERVER)
 
-#define CYON_OP_IMANODE		8
-#define CYON_OP_REPL		9
+#define CYON_OP_IMANODE		50
+#define CYON_OP_REPL		51
 
 #if defined(DEBUG)
 #define cyon_debug(fmt, ...)		\
@@ -190,6 +191,8 @@ pid_t		cyon_store_write(void);
 int		cyon_store_del(u_int8_t *, u_int32_t);
 int		cyon_store_put(u_int8_t *, u_int32_t, u_int8_t *, u_int32_t);
 int		cyon_store_get(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);
+int		cyon_store_replace(u_int8_t *, u_int32_t,
+		    u_int8_t *, u_int32_t);
 
 void		cyon_cluster_init(void);
 void		cyon_cluster_join(const char *);
