@@ -215,6 +215,9 @@ cyon_store_replace(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 
 	cyon_mem_free(old);
 
+	if (!replaying_log && !store_nowrite)
+		cyon_storelog_write(CYON_OP_REPLACE, key, len, data, dlen);
+
 	return (CYON_RESULT_OK);
 }
 
