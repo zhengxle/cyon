@@ -633,6 +633,11 @@ cyon_storelog_replay(struct store_header *header)
 				fatal("replay of log failed at this stage?");
 			removed++;
 			break;
+		case CYON_OP_REPLACE:
+			if (!cyon_store_replace(key,
+			    slog.klen, data, slog.dlen))
+				fatal("replay of log failed at this stage?");
+			break;
 		default:
 			printf("unknown log operation %d", slog.op);
 			break;
