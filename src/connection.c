@@ -417,8 +417,10 @@ cyon_connection_recv_auth(struct netbuf *nb)
 {
 	u_int32_t		klen;
 	struct cyon_op		*op, ret;
+	SHA256_CTX		sha256ctx;
 	u_int8_t		*passphrase;
 	int			(*cb)(struct netbuf *);
+	u_char			hash[SHA256_DIGEST_LENGTH];
 	struct connection	*c = (struct connection *)nb->owner;
 
 	op = (struct cyon_op *)nb->buf;
@@ -426,7 +428,7 @@ cyon_connection_recv_auth(struct netbuf *nb)
 	passphrase = nb->buf + sizeof(struct cyon_op);
 
 	if ((store_passphrase == NULL && klen != 0) ||
-	    (store_passphrase != NULL && klen != SHA256_DIGEST_LENGTH)) {
+	    (store_passphrase != NULL && klen == 0)) {
 		cyon_log(LOG_NOTICE, "botched authentication request from %s",
 		    inet_ntoa(c->sin.sin_addr));
 		return (CYON_RESULT_ERROR);
@@ -434,8 +436,14 @@ cyon_connection_recv_auth(struct netbuf *nb)
 
 	net_write32((u_int8_t *)&(ret.length), 0);
 
+	if (klen > 0) {
+		SHA256_Init(&sha256ctx);
+		SHA256_Update(&sha256ctx, passphrase, klen);
+		SHA256_Final(hash, &sha256ctx);
+	}
+
 	if ((store_passphrase != NULL &&
-	    !memcmp(store_passphrase, passphrase, SHA256_DIGEST_LENGTH)) ||
+	    !memcmp(store_passphrase, hash, SHA256_DIGEST_LENGTH)) ||
 	    (store_passphrase == NULL && klen == 0)) {
 		cb = NULL;
 		ret.op = CYON_OP_RESULT_OK;

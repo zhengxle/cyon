@@ -84,11 +84,9 @@ int
 main(int argc, char *argv[])
 {
 	int			r;
-	size_t			len;
 	struct cyon_op		*op, ret;
-	SHA256_CTX		sha256ctx;
+	size_t			len, slen;
 	u_int8_t		count, i, authpwd, *p;
-	u_char			hash[SHA256_DIGEST_LENGTH];
 	char			*input, **ap, *args[10];
 
 	authpwd = 0;
@@ -119,19 +117,16 @@ main(int argc, char *argv[])
 		if ((input = getpass("passphrase: ")) == NULL)
 			fatal("could not read passphrase");
 
-		SHA256_Init(&sha256ctx);
-		SHA256_Update(&sha256ctx, input, strlen(input));
-		SHA256_Final(hash, &sha256ctx);
-		memset(input, '\0', strlen(input));
-
-		len = sizeof(struct cyon_op) + SHA256_DIGEST_LENGTH;
+		slen = strlen(input);
+		len = sizeof(struct cyon_op) + slen;
 		if ((p = malloc(len)) == NULL)
 			fatal("malloc(): %s", errno_s);
 
 		op = (struct cyon_op *)p;
 		op->op = CYON_OP_AUTH;
-		net_write32((u_int8_t *)&(op->length), SHA256_DIGEST_LENGTH);
-		memcpy(p + sizeof(struct cyon_op), hash, SHA256_DIGEST_LENGTH);
+		net_write32((u_int8_t *)&(op->length), slen);
+		memcpy(p + sizeof(struct cyon_op), input, slen);
+		memset(input, '\0', slen);
 	} else {
 		len = sizeof(struct cyon_op);
 		if ((p = malloc(len)) == NULL)

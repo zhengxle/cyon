@@ -40,11 +40,9 @@ cyon_cluster_join(const char *host)
 	u_int8_t		*p;
 	struct connection	*c;
 	struct cyon_op		*op;
-	SHA256_CTX		ctx;
-	size_t			len, off;
 	char			*pass, *port;
+	size_t			len, slen, off;
 	struct addrinfo		*results, *res;
-	u_char			hash[SHA256_DIGEST_LENGTH];
 
 	if ((port = strchr(host, ':')) != NULL)
 		*(port)++ = '\0';
@@ -87,18 +85,15 @@ cyon_cluster_join(const char *host)
 	if ((pass = getpass("passphrase: ")) == NULL)
 		fatal("could not read passphrase");
 
-	SHA256_Init(&ctx);
-	SHA256_Update(&ctx, pass, strlen(pass));
-	SHA256_Final(hash, &ctx);
-	memset(pass, '\0', strlen(pass));
-
-	len = sizeof(struct cyon_op) + SHA256_DIGEST_LENGTH;
+	slen = strlen(pass);
+	len = sizeof(struct cyon_op) + slen;
 	p = cyon_malloc(len);
 
 	op = (struct cyon_op *)p;
 	op->op = CYON_OP_AUTH;
-	net_write32((u_int8_t *)&(op->length), SHA256_DIGEST_LENGTH);
-	memcpy(p + sizeof(struct cyon_op), hash, SHA256_DIGEST_LENGTH);
+	net_write32((u_int8_t *)&(op->length), slen);
+	memcpy(p + sizeof(struct cyon_op), pass, slen);
+	memset(pass, '\0', strlen(pass));
 
 	if (SSL_write(c->ssl, p, len) <= 0)
 		fatal("SSL_write(): %s", ssl_errno_s);
