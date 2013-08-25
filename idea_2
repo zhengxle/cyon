@@ -29,11 +29,20 @@ the other 2 nodes. (In effect providing proper replication for all available
 keyspaces).
 
 Another example:
-	At single node keyspace is 256.
-	New node joins, keyspace is = 256/2 (2 keyspaces of each 128).
-	Another node joins, first 128 keyspace is dvided into 2.
-	Another node joins, second keyspace is divided into 2
-	Now we have 4 keyspaces of each 64
+	- First node started, keyspace is 256
+	- Second node joins cluster, keyspace is still 256 (2 hosts)
+	- Third node joins cluster, keyspace is divided into 2 parts:
+		- Lower 128 and higher 128
+		- New node receives lower 128, together with first node.
+		- Second node receives higher 128, together with first node.
+		- First node still owns full keyspace range at this point.
+	- Fourth node joins cluster, keyspace is reassigned for equality
+		- Fourth now receives lower 128 together with third node
+		- First node reshuffles to only own higher 128 as the
+		  lower 128 now has 2 hosts assigned to it.
+	- End result:
+		- 2 nodes per 128 key space.
+	- Repeat until we run out of dividable keyspace?
 
 On startup nodes that own a keyspace must ask the other node[s?] that own
 it for the newest data (see async_replication?).
