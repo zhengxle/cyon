@@ -489,6 +489,8 @@ cyon_connection_recv_setauth(struct netbuf *nb)
 	net_write32((u_int8_t *)&(ret.length), 0);
 
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
+	cyon_storelog_write(CYON_OP_SETAUTH,
+	    store_passphrase, SHA256_DIGEST_LENGTH, NULL, 0);
 
 	return (CYON_RESULT_OK);
 }

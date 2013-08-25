@@ -76,8 +76,6 @@ static void		cyon_store_mapnode(int, struct node *);
 static struct node	*cyon_node_lookup(u_int8_t *, u_int32_t);
 static void		cyon_store_writenode(int, struct node *,
 			    u_int8_t *, u_int32_t, u_int32_t, u_int32_t *);
-static void		cyon_storelog_write(u_int8_t, u_int8_t *, u_int32_t,
-			    u_int8_t *, u_int32_t);
 
 u_int64_t		key_count;
 char			*storepath;
@@ -438,6 +436,43 @@ cyon_store_write(void)
 	exit(0);
 }
 
+void
+cyon_storelog_write(u_int8_t op, u_int8_t *key, u_int32_t klen,
+    u_int8_t *data, u_int32_t dlen)
+{
+	u_int32_t		len;
+	u_int8_t		*buf;
+	struct store_log	slog;
+
+	memset(&slog, 0, sizeof(slog));
+
+	slog.op = op;
+	slog.klen = klen;
+	slog.dlen = dlen;
+	memcpy(slog.magic, store_log_magic, 4);
+
+	len = klen + dlen + (sizeof(u_int32_t) * 2);
+	buf = cyon_malloc(len);
+
+	memcpy(buf, &klen, sizeof(u_int32_t));
+	memcpy(buf + sizeof(u_int32_t), &dlen, sizeof(u_int32_t));
+	memcpy(buf + (sizeof(u_int32_t) * 2), key, klen);
+	if (dlen > 0)
+		memcpy(buf + (sizeof(u_int32_t) * 2) + klen, data, dlen);
+
+	SHA_Init(&shactx);
+	SHA_Update(&shactx, buf, len);
+	SHA_Final(slog.hash, &shactx);
+
+	cyon_atomic_write(lfd, &slog, sizeof(slog), CYON_NO_CHECKSUM);
+	cyon_atomic_write(lfd, buf + (sizeof(u_int32_t) * 2),
+	    len - (sizeof(u_int32_t) * 2), CYON_NO_CHECKSUM);
+
+	log_modified = 1;
+	cyon_mem_free(buf);
+	store_log_offset += sizeof(slog) + (len - (sizeof(u_int32_t) * 2));
+}
+
 static void
 cyon_store_writenode(int fd, struct node *p, u_int8_t *buf, u_int32_t blen,
     u_int32_t mlen, u_int32_t *len)
@@ -623,6 +658,18 @@ cyon_storelog_replay(struct store_header *header)
 		}
 
 		switch (slog.op) {
+		case CYON_OP_SETAUTH:
+			if (slog.klen != SHA256_DIGEST_LENGTH) {
+				cyon_log(LOG_NOTICE,
+				    "replay of setauth log entry failed");
+				break;
+			}
+
+			if (store_passphrase != NULL)
+				cyon_mem_free(store_passphrase);
+			store_passphrase = cyon_malloc(slog.klen);
+			memcpy(store_passphrase, key, slog.klen);
+			break;
 		case CYON_OP_PUT:
 			if (!cyon_store_put(key, slog.klen, data, slog.dlen))
 				fatal("replay of log failed at this stage?");
@@ -702,43 +749,6 @@ cyon_store_mapnode(int fd, struct node *p)
 
 		cyon_store_mapnode(fd, np);
 	}
-}
-
-static void
-cyon_storelog_write(u_int8_t op, u_int8_t *key, u_int32_t klen,
-    u_int8_t *data, u_int32_t dlen)
-{
-	u_int32_t		len;
-	u_int8_t		*buf;
-	struct store_log	slog;
-
-	memset(&slog, 0, sizeof(slog));
-
-	slog.op = op;
-	slog.klen = klen;
-	slog.dlen = dlen;
-	memcpy(slog.magic, store_log_magic, 4);
-
-	len = klen + dlen + (sizeof(u_int32_t) * 2);
-	buf = cyon_malloc(len);
-
-	memcpy(buf, &klen, sizeof(u_int32_t));
-	memcpy(buf + sizeof(u_int32_t), &dlen, sizeof(u_int32_t));
-	memcpy(buf + (sizeof(u_int32_t) * 2), key, klen);
-	if (dlen > 0)
-		memcpy(buf + (sizeof(u_int32_t) * 2) + klen, data, dlen);
-
-	SHA_Init(&shactx);
-	SHA_Update(&shactx, buf, len);
-	SHA_Final(slog.hash, &shactx);
-
-	cyon_atomic_write(lfd, &slog, sizeof(slog), CYON_NO_CHECKSUM);
-	cyon_atomic_write(lfd, buf + (sizeof(u_int32_t) * 2),
-	    len - (sizeof(u_int32_t) * 2), CYON_NO_CHECKSUM);
-
-	log_modified = 1;
-	cyon_mem_free(buf);
-	store_log_offset += sizeof(slog) + (len - (sizeof(u_int32_t) * 2));
 }
 
 static void

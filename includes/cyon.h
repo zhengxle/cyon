@@ -152,6 +152,8 @@ void		cyon_log(int, const char *, ...);
 void		cyon_strlcpy(char *, const char *, size_t);
 void		cyon_debug_internal(char *, int, const char *, ...);
 long long	cyon_strtonum(const char *, long long, long long, int *);
+void		cyon_storelog_write(u_int8_t, u_int8_t *, u_int32_t,
+		    u_int8_t *, u_int32_t );
 
 void		*cyon_malloc(size_t);
 void		*cyon_calloc(size_t, size_t);
