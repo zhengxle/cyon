@@ -66,7 +66,7 @@ main(int argc, char *argv[])
 	char		*jnode;
 	int		ch, err;
 	u_int8_t	foreground;
-	u_int64_t	last_storelog_flush;
+	u_int64_t	last_storelog_flush, idle_check;
 
 	port = 3331;
 	jnode = NULL;
@@ -139,8 +139,9 @@ main(int argc, char *argv[])
 	signal(SIGPIPE, SIG_IGN);
 
 	server_started = 1;
-	last_store_write = cyon_time_ms();
+	idle_check = last_store_write = cyon_time_ms();
 	cyon_log(LOG_NOTICE, "server ready on %s:%d", ip, port);
+
 	for (;;) {
 		if (sig_recv == SIGQUIT)
 			break;
@@ -159,6 +160,12 @@ main(int argc, char *argv[])
 
 		cyon_storewrite_wait(0);
 		cyon_platform_event_wait();
+
+		if ((now - idle_check) >= 10000) {
+			idle_check = now;
+			cyon_connection_check_idletimer(now);
+		}
+
 		cyon_connection_prune();
 	}
 

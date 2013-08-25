@@ -68,6 +68,8 @@ void		fatal(const char *, ...);
 #define CYON_OP_IMANODE		50
 #define CYON_OP_REPL		51
 
+#define DEBUG			1
+
 #if defined(DEBUG)
 #define cyon_debug(fmt, ...)		\
 	cyon_debug_internal(__FILE__, __LINE__, fmt, ##__VA_ARGS__)
@@ -83,6 +85,7 @@ void		fatal(const char *, ...);
 #define CYON_STORE_WRITE_NOFORK		0
 #define CYON_STORE_WRITE_FORK		1
 #define CYON_STORE_WRITE_INTERVAL	60000
+#define CYON_IDLE_TIMER_MAX		20000
 
 #define NETBUF_RECV		0
 #define NETBUF_SEND		1
@@ -114,6 +117,7 @@ struct netbuf {
 #define CONN_WRITE_POSSIBLE		0x02
 #define CONN_AUTHENTICATED		0x10
 #define CONN_IS_NODE			0x20
+#define CONN_IDLE_TIMER_ACT		0x40
 
 struct listener {
 	int			fd;
@@ -127,6 +131,11 @@ struct connection {
 	void			*owner;
 	SSL			*ssl;
 	u_int8_t		flags;
+
+	struct {
+		u_int64_t	length;
+		u_int64_t	start;
+	} idle_timer;
 
 	TAILQ_HEAD(, netbuf)	send_queue;
 	TAILQ_HEAD(, netbuf)	recv_queue;
@@ -169,6 +178,9 @@ void		cyon_connection_disconnect_all(void);
 int		cyon_connection_handle(struct connection *);
 void		cyon_connection_remove(struct connection *);
 void		cyon_connection_disconnect(struct connection *);
+void		cyon_connection_start_idletimer(struct connection *);
+void		cyon_connection_stop_idletimer(struct connection *);
+void		cyon_connection_check_idletimer(u_int64_t);
 int		cyon_connection_accept(struct listener *,
 		    struct connection **);
 
@@ -198,7 +210,7 @@ int		cyon_store_replace(u_int8_t *, u_int32_t,
 
 void		cyon_cluster_init(void);
 void		cyon_cluster_join(const char *);
-void		cyon_cluster_node_register(struct connection *);
+void		cyon_cluster_node_register(struct connection *, int);
 
 #endif /* CYON_SERVER */
 

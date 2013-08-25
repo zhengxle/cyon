@@ -128,12 +128,12 @@ cyon_cluster_join(const char *host)
 	TAILQ_INIT(&(c->send_queue));
 	TAILQ_INIT(&(c->recv_queue));
 
-	cyon_cluster_node_register(c);
+	cyon_cluster_node_register(c, 0);
 	cyon_platform_event_schedule(c->fd, EPOLLIN | EPOLLOUT | EPOLLET, 0, c);
 }
 
 void
-cyon_cluster_node_register(struct connection *c)
+cyon_cluster_node_register(struct connection *c, int receiving)
 {
 	if (c->flags & CONN_IS_NODE)
 		return;
@@ -145,6 +145,9 @@ cyon_cluster_node_register(struct connection *c)
 
 	net_recv_queue(c, sizeof(struct cyon_op), 0,
 	    NULL, cyon_cluster_recv_op);
+
+	if (receiving) {
+	}
 }
 
 static int

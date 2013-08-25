@@ -70,11 +70,14 @@ cyon_connection_accept(struct listener *l, struct connection **out)
 	c->owner = l;
 	c->ssl = NULL;
 	c->flags = 0;
+	c->idle_timer.start = 0;
 	c->state = CONN_STATE_SSL_SHAKE;
+	c->idle_timer.length = CYON_IDLE_TIMER_MAX;
 
 	TAILQ_INIT(&(c->send_queue));
 	TAILQ_INIT(&(c->recv_queue));
 	TAILQ_INSERT_TAIL(&clients, c, list);
+	cyon_connection_start_idletimer(c);
 
 	*out = c;
 	return (CYON_RESULT_OK);
@@ -154,6 +157,8 @@ cyon_connection_handle(struct connection *c)
 		break;
 	}
 
+	cyon_connection_start_idletimer(c);
+
 	return (CYON_RESULT_OK);
 }
 
@@ -184,6 +189,35 @@ cyon_connection_remove(struct connection *c)
 	}
 
 	cyon_mem_free(c);
+}
+
+void
+cyon_connection_check_idletimer(u_int64_t now)
+{
+	u_int64_t		d;
+	struct connection	*c;
+
+	TAILQ_FOREACH(c, &clients, list) {
+		d = now - c->idle_timer.start;
+		if (d >= c->idle_timer.length) {
+			cyon_debug("%p idle for %d ms, expiring", c, d);
+			cyon_connection_disconnect(c);
+		}
+	}
+}
+
+void
+cyon_connection_start_idletimer(struct connection *c)
+{
+	c->flags |= CONN_IDLE_TIMER_ACT;
+	c->idle_timer.start = cyon_time_ms();
+}
+
+void
+cyon_connection_stop_idletimer(struct connection *c)
+{
+	c->flags &= ~CONN_IDLE_TIMER_ACT;
+	c->idle_timer.start = 0;
 }
 
 void
@@ -242,6 +276,7 @@ cyon_connection_recv_op(struct netbuf *nb)
 	r = CYON_RESULT_ERROR;
 	len = net_read32((u_int8_t *)&(op->length));
 	cyon_debug("cyon_connection_recv_op(): %d (len: %d)", op->op, len);
+	cyon_connection_stop_idletimer(c);
 
 	if (!(c->flags & CONN_AUTHENTICATED) && op->op != CYON_OP_AUTH)
 		return (CYON_RESULT_ERROR);
@@ -279,7 +314,7 @@ cyon_connection_recv_op(struct netbuf *nb)
 		cyon_connection_recv_stats(c);
 		break;
 	case CYON_OP_IMANODE:
-		cyon_cluster_node_register(c);
+		cyon_cluster_node_register(c, 1);
 		return (CYON_RESULT_OK);
 	default:
 		cyon_debug("unknown cyon_op %d", op->op);
