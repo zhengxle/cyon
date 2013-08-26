@@ -53,6 +53,7 @@ extern const char	*__progname;
 SSL_CTX			*ssl_ctx = NULL;
 u_int64_t		last_store_write;
 u_int8_t		server_started = 0;
+u_int32_t		idle_timeout = CYON_IDLE_TIMER_MAX;
 
 static pid_t		writepid = -1;
 static u_int32_t	store_write_int = CYON_STORE_WRITE_INTERVAL;
@@ -74,13 +75,20 @@ main(int argc, char *argv[])
 	storepath = NULL;
 	ip = "127.0.0.1";
 
-	while ((ch = getopt(argc, argv, "b:fj:np:s:w:")) != -1) {
+	while ((ch = getopt(argc, argv, "b:fi:j:np:s:w:")) != -1) {
 		switch (ch) {
 		case 'b':
 			ip = optarg;
 			break;
 		case 'f':
 			foreground = 1;
+			break;
+		case 'i':
+			idle_timeout = cyon_strtonum(optarg, 0,
+			    UINT_MAX / 1000, &err);
+			if (err != CYON_RESULT_OK)
+				fatal("Invalid timeout value: %s", optarg);
+			idle_timeout = idle_timeout * 1000;
 			break;
 		case 'j':
 			jnode = optarg;
@@ -161,7 +169,7 @@ main(int argc, char *argv[])
 		cyon_storewrite_wait(0);
 		cyon_platform_event_wait();
 
-		if ((now - idle_check) >= 10000) {
+		if (idle_timeout > 0 && (now - idle_check) >= 10000) {
 			idle_check = now;
 			cyon_connection_check_idletimer(now);
 		}

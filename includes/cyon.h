@@ -68,8 +68,6 @@ void		fatal(const char *, ...);
 #define CYON_OP_IMANODE		50
 #define CYON_OP_REPL		51
 
-#define DEBUG			1
-
 #if defined(DEBUG)
 #define cyon_debug(fmt, ...)		\
 	cyon_debug_internal(__FILE__, __LINE__, fmt, ##__VA_ARGS__)
@@ -148,6 +146,7 @@ extern SSL_CTX			*ssl_ctx;
 extern u_int32_t		meminuse;
 extern u_int64_t		key_count;
 extern char			*storepath;
+extern u_int32_t		idle_timeout;
 extern u_int64_t		last_store_write;
 extern u_char			*store_passphrase;
 extern u_int8_t			store_nowrite;

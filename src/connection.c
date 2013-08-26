@@ -72,7 +72,7 @@ cyon_connection_accept(struct listener *l, struct connection **out)
 	c->flags = 0;
 	c->idle_timer.start = 0;
 	c->state = CONN_STATE_SSL_SHAKE;
-	c->idle_timer.length = CYON_IDLE_TIMER_MAX;
+	c->idle_timer.length = idle_timeout;
 
 	TAILQ_INIT(&(c->send_queue));
 	TAILQ_INIT(&(c->recv_queue));
@@ -209,6 +209,9 @@ cyon_connection_check_idletimer(u_int64_t now)
 void
 cyon_connection_start_idletimer(struct connection *c)
 {
+	if (idle_timeout == 0)
+		return;
+
 	c->flags |= CONN_IDLE_TIMER_ACT;
 	c->idle_timer.start = cyon_time_ms();
 }
@@ -216,6 +219,9 @@ cyon_connection_start_idletimer(struct connection *c)
 void
 cyon_connection_stop_idletimer(struct connection *c)
 {
+	if (idle_timeout == 0)
+		return;
+
 	c->flags &= ~CONN_IDLE_TIMER_ACT;
 	c->idle_timer.start = 0;
 }
