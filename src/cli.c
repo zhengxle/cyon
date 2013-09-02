@@ -362,9 +362,13 @@ cyon_getkeys(u_int8_t *key, u_int32_t klen, u_int8_t **out, u_int32_t *dlen)
 
 	if (op.op == CYON_OP_RESULT_OK) {
 		*dlen = net_read32((u_int8_t *)&(op.length));
-		if ((*out = malloc(*dlen)) == NULL)
-			fatal("malloc(): %s", errno_s);
-		cyon_ssl_read(*out, *dlen);
+
+		if (*dlen > 0) {
+			if ((*out = malloc(*dlen)) == NULL)
+				fatal("malloc(): %s", errno_s);
+			cyon_ssl_read(*out, *dlen);
+		}
+
 	} else if (op.op != CYON_OP_RESULT_ERROR) {
 		printf("Unexpected result from server: %d\n", op.op);
 	}
@@ -542,6 +546,7 @@ cyon_cli_get(u_int8_t argc, char **argv)
 void
 cyon_cli_getkeys(u_int8_t argc, char **argv)
 {
+	int		r;
 	char		*key;
 	u_int16_t	klen;
 	u_int8_t	*out, *p;
@@ -552,33 +557,40 @@ cyon_cli_getkeys(u_int8_t argc, char **argv)
 		return;
 	}
 
-	if (cyon_getkeys((u_int8_t *)argv[1], strlen(argv[1]), &out, &len)) {
-		count = net_read32(out);
-		printf("got %d bytes - received %d keys\n", len, count);
-
-		i = 0;
-		p = out + sizeof(u_int32_t);
-		while (i < count && p < (out + len)) {
-			klen = net_read16(p);
-			p += sizeof(u_int16_t);
-
-			if ((key = malloc(klen + 1)) == NULL)
-				fatal("malloc(): %s", errno_s);
-
-			memset(key, '\0', klen + 1);
-			memcpy(key, p, klen);
-			printf("%s\n", key);
-
-			free(key);
-
-			p += klen;
-			i++;
-		}
-
-		free(out);
-	} else {
+	r = cyon_getkeys((u_int8_t *)argv[1], strlen(argv[1]), &out, &len);
+	if (!r) {
 		printf("No keys found, or an error occured\n");
+		return;
 	}
+
+	if (len == 0) {
+		printf("no keys found\n");
+		return;
+	}
+
+	count = net_read32(out);
+	printf("got %d bytes - received %d keys\n", len, count);
+
+	i = 0;
+	p = out + sizeof(u_int32_t);
+	while (i < count && p < (out + len)) {
+		klen = net_read16(p);
+		p += sizeof(u_int16_t);
+
+		if ((key = malloc(klen + 1)) == NULL)
+			fatal("malloc(): %s", errno_s);
+
+		memset(key, '\0', klen + 1);
+		memcpy(key, p, klen);
+		printf("%s\n", key);
+
+		free(key);
+
+		p += klen;
+		i++;
+	}
+
+	free(out);
 }
 
 void

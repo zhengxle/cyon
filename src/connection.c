@@ -420,8 +420,12 @@ cyon_connection_recv_getkeys(struct netbuf *nb)
 		net_write32((u_int8_t *)&(ret.length), olen);
 
 		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
-		net_send_queue(c, out, olen,
-		    NETBUF_USE_DATA_DIRECT, NULL, NULL);
+
+		if (olen > 0) {
+			net_send_queue(c, out, olen,
+			    NETBUF_USE_DATA_DIRECT, NULL, NULL);
+		}
+
 	} else {
 		ret.op = CYON_OP_RESULT_ERROR;
 		net_write32((u_int8_t *)&(ret.length), 0);
