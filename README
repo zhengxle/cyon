@@ -1,0 +1,4 @@
+Cyon is an in-memory key/value cluster with disk persistence.
+Under development, clustering does not work yet.
+
+joris@coders.se for bugs, patches, insults.
