@@ -110,5 +110,16 @@ cyon_time_ms(void)
 	if (gettimeofday(&tv, NULL) == -1)
 		return (0);
 
-	return (tv.tv_sec * 1000 + (tv.tv_usec / 1000));
+	return ((tv.tv_sec * 1000) + (tv.tv_usec / 1000));
+}
+
+u_int64_t
+cyon_time_us(void)
+{
+	struct timeval		tv;
+
+	if (gettimeofday(&tv, NULL) == -1)
+		return (0);
+
+	return ((tv.tv_sec * 1000000) + tv.tv_usec);
 }

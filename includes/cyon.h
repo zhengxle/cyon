@@ -38,6 +38,7 @@
 #define CYON_OP_SETAUTH		6
 #define CYON_OP_DEL		7
 #define CYON_OP_REPLACE		8
+#define CYON_OP_GETKEYS		9
 #define CYON_OP_RESULT_OK	200
 #define CYON_OP_RESULT_ERROR	201
 
@@ -47,7 +48,7 @@ struct cyon_op {
 } __attribute__((__packed__));
 
 struct cyon_stats {
-	u_int32_t		meminuse;
+	u_int64_t		meminuse;
 	u_int64_t		keycount;
 } __attribute__((__packed__));
 
@@ -143,7 +144,7 @@ struct connection {
 
 extern struct listener		server;
 extern SSL_CTX			*ssl_ctx;
-extern u_int32_t		meminuse;
+extern u_int64_t		meminuse;
 extern u_int64_t		key_count;
 extern char			*storepath;
 extern u_int32_t		idle_timeout;
@@ -153,6 +154,7 @@ extern u_int8_t			store_nowrite;
 extern u_int8_t			server_started;
 
 u_int64_t	cyon_time_ms(void);
+u_int64_t	cyon_time_us(void);
 void		cyon_log_init(void);
 void		cyon_storelog_flush(void);
 void		cyon_storewrite_start(void);
@@ -204,6 +206,8 @@ pid_t		cyon_store_write(void);
 int		cyon_store_del(u_int8_t *, u_int32_t);
 int		cyon_store_put(u_int8_t *, u_int32_t, u_int8_t *, u_int32_t);
 int		cyon_store_get(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);
+int		cyon_store_getkeys(u_int8_t *, u_int32_t,
+		    u_int8_t **, u_int32_t *);
 int		cyon_store_replace(u_int8_t *, u_int32_t,
 		    u_int8_t *, u_int32_t);
 

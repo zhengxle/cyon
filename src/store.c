@@ -74,8 +74,9 @@ static void		cyon_atomic_read(int, void *, u_int32_t, int);
 static void		cyon_atomic_write(int, void *, u_int32_t, int);
 static void		cyon_store_mapnode(int, struct node *);
 static struct node	*cyon_node_lookup(u_int8_t *, u_int32_t);
+static void		cyon_traverse_node(struct node *);
 static void		cyon_store_writenode(int, struct node *,
-			    u_int8_t *, u_int32_t, u_int32_t, u_int32_t *);
+			    u_int8_t *, u_int32_t, u_int32_t *);
 
 u_int64_t		key_count;
 char			*storepath;
@@ -89,6 +90,15 @@ static u_int64_t	store_log_offset;
 static u_int8_t		replaying_log = 0;
 static u_int8_t		log_modified = 0;
 
+static u_int32_t	*traverse_count;
+static u_int8_t		*traverse_buf = NULL;
+static u_int32_t	traverse_buf_len = 0;
+static u_int32_t	traverse_buf_off = 0;
+
+static u_int8_t		*traverse_key = NULL;
+static u_int32_t	traverse_key_len = 0;
+static u_int32_t	traverse_key_off = 0;
+
 void
 cyon_store_init(void)
 {
@@ -101,15 +111,24 @@ cyon_store_init(void)
 	store_log_offset = 0;
 	store_passphrase = NULL;
 
+	traverse_buf_off = 0;
+	traverse_buf_len = 16 * 1024 * 1024;
+	traverse_buf = cyon_malloc(traverse_buf_len);
+
+	traverse_key_off = 0;
+	traverse_key_len = 1024;
+	traverse_key = cyon_malloc(traverse_key_len);
+	memset(traverse_key, '\0', traverse_key_len);
+
 	cyon_store_map();
 
 	if (rnode == NULL) {
-		printf("cyon: store is empty, starting new store\n");
+		cyon_log(LOG_NOTICE, "store is empty, starting new store");
 		rnode = cyon_malloc(sizeof(struct node));
 		memset(rnode, 0, sizeof(struct node));
 	} else {
-		printf("cyon: store loaded from disk with %ld keys\n",
-		    key_count);
+		cyon_log(LOG_NOTICE,
+		    "store loaded from disk with %ld keys", key_count);
 	}
 
 	if (!store_nowrite) {
@@ -139,6 +158,38 @@ cyon_store_get(u_int8_t *key, u_int32_t len, u_int8_t **out, u_int32_t *olen)
 
 	*olen = *(u_int32_t *)p->region;
 	*out = p->region + sizeof(u_int32_t);
+
+	return (CYON_RESULT_OK);
+}
+
+int
+cyon_store_getkeys(u_int8_t *root, u_int32_t rlen,
+    u_int8_t **out, u_int32_t *olen)
+{
+	struct node	*p;
+
+	*olen = 0;
+	*out = NULL;
+
+	if ((p = cyon_node_lookup(root, rlen)) == NULL)
+		return (CYON_RESULT_OK);
+
+	if (p->region == NULL)
+		return (CYON_RESULT_OK);
+
+	memset(traverse_key, '\0', traverse_key_len);
+	memcpy(traverse_key, root, rlen);
+	traverse_key_off = rlen;
+
+	traverse_count = (u_int32_t *)traverse_buf;
+	traverse_buf_off = sizeof(u_int32_t);
+	*traverse_count = 0;
+
+	cyon_traverse_node(p);
+
+	*out = traverse_buf;
+	*olen = traverse_buf_off;
+	net_write32((u_int8_t *)traverse_count, *traverse_count);
 
 	return (CYON_RESULT_OK);
 }
@@ -363,7 +414,7 @@ cyon_store_write(void)
 	u_int8_t		*buf;
 	struct store_header	header;
 	int			fd, ret;
-	u_int32_t		len, blen, mlen;
+	u_int32_t		len, blen;
 	u_char			hash[SHA_DIGEST_LENGTH];
 	char			fpath[MAXPATHLEN], tpath[MAXPATHLEN];
 
@@ -406,9 +457,8 @@ cyon_store_write(void)
 		len = 0;
 		blen = 128 * 1024 * 1024;
 		buf = cyon_malloc(blen);
-		mlen = sizeof(struct node);
 
-		cyon_store_writenode(fd, rnode, buf, blen, mlen, &len);
+		cyon_store_writenode(fd, rnode, buf, blen, &len);
 		if (len > 0)
 			cyon_atomic_write(fd, buf, len, CYON_ADD_CHECKSUM);
 
@@ -475,7 +525,7 @@ cyon_storelog_write(u_int8_t op, u_int8_t *key, u_int32_t klen,
 
 static void
 cyon_store_writenode(int fd, struct node *p, u_int8_t *buf, u_int32_t blen,
-    u_int32_t mlen, u_int32_t *len)
+    u_int32_t *len)
 {
 	struct node		*np;
 	u_int32_t		offset, i, rlen;
@@ -492,14 +542,18 @@ cyon_store_writenode(int fd, struct node *p, u_int8_t *buf, u_int32_t blen,
 		    (((p->rtop - p->rbase) + 1) * sizeof(struct node));
 	}
 
-	if ((*len + mlen) > (blen + rlen)) {
+	if (p == rnode)
+		rlen += sizeof(struct node);
+
+	if ((*len + rlen) >= blen) {
 		cyon_atomic_write(fd, buf, *len, CYON_ADD_CHECKSUM);
 		*len = 0;
 	}
 
 	if (p == rnode) {
-		memcpy(buf + *len, p, mlen);
-		*len += mlen;
+		rlen -= sizeof(struct node);
+		memcpy(buf + *len, p, sizeof(struct node));
+		*len += sizeof(struct node);
 	}
 
 	if (p->region == NULL)
@@ -516,7 +570,7 @@ cyon_store_writenode(int fd, struct node *p, u_int8_t *buf, u_int32_t blen,
 		np = (struct node *)((u_int8_t *)p->region + offset +
 		    (i * sizeof(struct node)));
 
-		cyon_store_writenode(fd, np, buf, blen, mlen, len);
+		cyon_store_writenode(fd, np, buf, blen, len);
 	}
 }
 
@@ -691,7 +745,8 @@ cyon_storelog_replay(struct store_header *header)
 		}
 	}
 
-	printf("store replay completed: %ld added, %ld removed\n",
+	cyon_log(LOG_NOTICE,
+	    "store replay completed: %ld added, %ld removed",
 	    added, removed);
 
 	close(lfd);
@@ -826,4 +881,59 @@ cyon_node_lookup(u_int8_t *key, u_int32_t len)
 	}
 
 	return (p);
+}
+
+static void
+cyon_traverse_node(struct node *rp)
+{
+	u_int8_t	i;
+	struct node	*p;
+	u_int32_t	rlen, len, klen;
+
+	if (rp->region == NULL)
+		return;
+
+	if (rp->flags & NODE_FLAG_HASDATA) {
+		len = *(u_int32_t *)rp->region;
+		rlen = sizeof(u_int32_t) + len;
+
+		klen = sizeof(u_int16_t) + traverse_key_off;
+		if ((traverse_buf_off + klen) >= traverse_buf_len) {
+			cyon_log(LOG_NOTICE,
+			    "traverse output exhausted (%d keys)",
+			    *traverse_count);
+			return;
+		}
+
+		*traverse_count = *traverse_count + 1;
+
+		net_write16(traverse_buf + traverse_buf_off, traverse_key_off);
+		memcpy(traverse_buf + traverse_buf_off + sizeof(u_int16_t),
+		    traverse_key, traverse_key_off);
+
+		traverse_buf_off += klen;
+	} else {
+		rlen = 0;
+	}
+
+	if (rp->rbase == 0 && rp->rtop == 0)
+		return;
+
+	for (i = rp->rbase; i <= rp->rtop; i++) {
+		p = (struct node *)((u_int8_t *)rp->region + rlen +
+		    ((i - rp->rbase) * sizeof(struct node)));
+
+		if (traverse_key_off >= traverse_key_len) {
+			traverse_key_len = traverse_key_len * 2;
+			traverse_key = cyon_realloc(traverse_key,
+			    traverse_key_len);
+
+			memset(traverse_key + traverse_key_off,
+			    '\0', traverse_key_len - traverse_key_off);
+		}
+
+		traverse_key[traverse_key_off++] = i;
+		cyon_traverse_node(p);
+		traverse_key[traverse_key_off--] = '\0';
+	}
 }

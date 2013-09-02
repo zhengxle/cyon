@@ -30,7 +30,7 @@ struct meminfo {
 	u_int16_t		magic;
 } __attribute__((__packed__));
 
-u_int32_t			meminuse;
+u_int64_t			meminuse;
 
 void
 cyon_mem_init(void)

@@ -31,6 +31,7 @@ static int		cyon_connection_recv_replace(struct netbuf *);
 static int		cyon_connection_recv_auth(struct netbuf *);
 static int		cyon_connection_terminate(struct netbuf *);
 static int		cyon_connection_recv_setauth(struct netbuf *);
+static int		cyon_connection_recv_getkeys(struct netbuf *);
 static void		cyon_connection_recv_stats(struct connection *);
 static void		cyon_connection_recv_write(struct connection *);
 
@@ -294,6 +295,9 @@ cyon_connection_recv_op(struct netbuf *nb)
 	case CYON_OP_GET:
 		r = net_recv_expand(c, nb, len, cyon_connection_recv_get);
 		break;
+	case CYON_OP_GETKEYS:
+		r = net_recv_expand(c, nb, len, cyon_connection_recv_getkeys);
+		break;
 	case CYON_OP_SETAUTH:
 		r = net_recv_expand(c, nb, len, cyon_connection_recv_setauth);
 		break;
@@ -386,6 +390,37 @@ cyon_connection_recv_get(struct netbuf *nb)
 
 		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
 		net_send_queue(c, data, dlen,
+		    NETBUF_USE_DATA_DIRECT, NULL, NULL);
+	} else {
+		ret.op = CYON_OP_RESULT_ERROR;
+		net_write32((u_int8_t *)&(ret.length), 0);
+		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
+	}
+
+	return (CYON_RESULT_OK);
+}
+
+static int
+cyon_connection_recv_getkeys(struct netbuf *nb)
+{
+	struct cyon_op		ret, *op;
+	u_int32_t		klen, olen;
+	u_int8_t		*key, *out;
+	struct connection	*c = (struct connection *)nb->owner;
+
+	op = (struct cyon_op *)nb->buf;
+	klen = net_read32((u_int8_t *)&(op->length));
+	key = nb->buf + sizeof(struct cyon_op);
+
+	if (klen == 0)
+		return (CYON_RESULT_ERROR);
+
+	if (cyon_store_getkeys(key, klen, &out, &olen)) {
+		ret.op = CYON_OP_RESULT_OK;
+		net_write32((u_int8_t *)&(ret.length), olen);
+
+		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
+		net_send_queue(c, out, olen,
 		    NETBUF_USE_DATA_DIRECT, NULL, NULL);
 	} else {
 		ret.op = CYON_OP_RESULT_ERROR;
@@ -568,7 +603,7 @@ cyon_connection_recv_stats(struct connection *c)
 	net_write32((u_int8_t *)&(ret.length), sizeof(struct cyon_stats));
 
 	stats.keycount = htobe64(key_count);
-	net_write32((u_int8_t *)&(stats.meminuse), meminuse);
+	stats.meminuse = htobe64(meminuse);
 
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
 	net_send_queue(c, (u_int8_t *)&stats, sizeof(stats), 0, NULL, NULL);

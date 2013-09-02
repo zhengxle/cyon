@@ -136,9 +136,13 @@ main(int argc, char *argv[])
 	if (jnode != NULL)
 		cyon_cluster_join(jnode);
 
-	cyon_store_init();
+	if (foreground == 0)
+		printf("cyon daemonizing, check system log for details\n");
+
 	if (foreground == 0 && daemon(1, 1) == -1)
 		fatal("could not forkify(): %s", errno_s);
+
+	cyon_store_init();
 
 	sig_recv = 0;
 	signal(SIGQUIT, cyon_signal);
