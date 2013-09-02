@@ -14,6 +14,13 @@ keyspace_root {
 Each keyspace MUST have 2 hosts so before keyspace is divided the host
 is added to the keyspace with the keyspace with < 2 hosts.
 
+All nodes in a keyspace act as MASTERS inside that keyspace. Emiting
+UPDATEIDX to keyspace nodes when they receive a key operation.
+
+All nodes in a keyspace can be QUERIED for a key, if the key is not
+on the queried node, it will redirect the requester to the appropriate
+node in the keyspace (or one of them).
+
 A single node has a single keyspace, ranging from 0-255.
 When a new node joins, this keyspace is replicated to create redudancy.
 
