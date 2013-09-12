@@ -786,7 +786,7 @@ cyon_store_mapnode(int fd, struct node *p)
 		offset = offset + sizeof(u_int32_t);
 	} else {
 		offset = 0;
-		if (p->rbase != 0 && p->rtop != 0) {
+		if (p->rbase != 0 || p->rtop != 0) {
 			rlen = (p->rtop - p->rbase + 1) * sizeof(struct node);
 			p->region = cyon_malloc(rlen);
 			cyon_atomic_read(fd,
