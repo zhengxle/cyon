@@ -290,6 +290,7 @@ cyon_connection_recv_op(struct netbuf *nb)
 
 	switch (op->op) {
 	case CYON_OP_PUT:
+	case CYON_OP_MAKELINK:
 		r = net_recv_expand(c, nb, len, cyon_connection_recv_put);
 		break;
 	case CYON_OP_GET:
@@ -341,8 +342,9 @@ static int
 cyon_connection_recv_put(struct netbuf *nb)
 {
 	struct cyon_op		ret;
-	u_int32_t		dlen, klen;
 	u_int8_t		*key, *data;
+	u_int32_t		dlen, klen, flags;
+	struct cyon_op		*op = (struct cyon_op *)nb->buf;
 	struct connection	*c = (struct connection *)nb->owner;
 
 	klen = net_read32(nb->buf + sizeof(struct cyon_op));
@@ -356,7 +358,12 @@ cyon_connection_recv_put(struct netbuf *nb)
 	key = nb->buf + sizeof(struct cyon_op) + (sizeof(u_int32_t) * 2);
 	data = key + klen;
 
-	if (cyon_store_put(key, klen, data, dlen))
+	if (op->op == CYON_OP_MAKELINK)
+		flags = NODE_FLAG_ISLINK;
+	else
+		flags = 0;
+
+	if (cyon_store_put(key, klen, data, dlen, flags))
 		ret.op = CYON_OP_RESULT_OK;
 	else
 		ret.op = CYON_OP_RESULT_ERROR;
@@ -570,7 +577,7 @@ cyon_connection_recv_setauth(struct netbuf *nb)
 
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
 	cyon_storelog_write(CYON_OP_SETAUTH,
-	    store_passphrase, SHA256_DIGEST_LENGTH, NULL, 0);
+	    store_passphrase, SHA256_DIGEST_LENGTH, NULL, 0, 0);
 
 	return (CYON_RESULT_OK);
 }

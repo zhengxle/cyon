@@ -73,6 +73,7 @@ struct {
 	{ "replace",		cyon_cli_upload },
 	{ "getkeys",		cyon_cli_getkeys },
 	{ "test",		cyon_cli_test },
+	{ "makelink",		cyon_cli_upload },
 	{ NULL,		NULL },
 };
 
@@ -408,55 +409,67 @@ cyon_cli_upload(u_int8_t argc, char **argv)
 	ssize_t		r;
 	int		fd;
 	struct stat	st;
+	off_t		size;
 	u_int8_t	*d, id;
 
 	if (!strcmp(argv[0], "put")) {
 		id = CYON_OP_PUT;
 	} else if (!strcmp(argv[0], "replace")) {
 		id = CYON_OP_REPLACE;
+	} else if (!strcmp(argv[0], "makelink")) {
+		id = CYON_OP_MAKELINK;
 	} else {
 		printf("invalid\n");
 		return;
 	}
 
 	if (argc != 3) {
-		printf("%s [key] [infile]\n", argv[0]);
+		printf("%s [key] [%s]\n", argv[0],
+		    (id == CYON_OP_MAKELINK) ? "origin" : "infile");
 		return;
 	}
 
-	if ((fd = open(argv[2], O_RDONLY)) == -1) {
-		printf("could not open '%s': %s\n", argv[2], errno_s);
-		return;
-	}
+	if (id != CYON_OP_MAKELINK) {
+		if ((fd = open(argv[2], O_RDONLY)) == -1) {
+			printf("could not open '%s': %s\n", argv[2], errno_s);
+			return;
+		}
 
-	if (fstat(fd, &st) == -1) {
-		close(fd);
-		printf("fstat() failed: %s\n", errno_s);
-		return;
-	}
+		if (fstat(fd, &st) == -1) {
+			close(fd);
+			printf("fstat() failed: %s\n", errno_s);
+			return;
+		}
 
-	if ((d = malloc(st.st_size)) == NULL) {
-		close(fd);
-		printf("malloc(): failed: %s\n", errno_s);
-		return;
-	}
+		size = st.st_size;
+		if ((d = malloc(size)) == NULL) {
+			close(fd);
+			printf("malloc(): failed: %s\n", errno_s);
+			return;
+		}
 
-	r = read(fd, d, st.st_size);
-	if (r != st.st_size) {
-		close(fd);
-		free(d);
-		printf("could not read from '%s'\n", argv[2]);
-		return;
+		r = read(fd, d, size);
+		if (r != size) {
+			close(fd);
+			free(d);
+			printf("could not read from '%s'\n", argv[2]);
+			return;
+		}
+	} else {
+		d = (u_int8_t *)argv[2];
+		size = strlen(argv[2]);
 	}
 
 	if (cyon_upload(id,
-	    (u_int8_t *)argv[1], strlen(argv[1]), d, st.st_size))
+	    (u_int8_t *)argv[1], strlen(argv[1]), d, size))
 		printf("Key was added successfully.\n");
 	else
 		printf("The key was not added successfully.\n");
 
-	free(d);
-	close(fd);
+	if (id != CYON_OP_MAKELINK) {
+		free(d);
+		close(fd);
+	}
 }
 
 void

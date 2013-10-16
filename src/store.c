@@ -42,7 +42,9 @@
 #define CYON_STORE_FILE			"cyon.store"
 #define CYON_STORE_TMPFILE		"cyon.store.tmp"
 
-#define NODE_FLAG_HASDATA		0x01
+#define CYON_RESOLVE_NOTHING		0
+#define CYON_RESOLVE_LINK		1
+
 #define STORE_HAS_PASSPHRASE		0x01
 
 struct node {
@@ -66,6 +68,7 @@ struct store_log {
 	u_int8_t	op;
 	u_int32_t	klen;
 	u_int32_t	dlen;
+	u_int32_t	flags;
 } __attribute__((__packed__));
 
 static void		cyon_store_map(void);
@@ -73,7 +76,7 @@ static void		cyon_storelog_replay(struct store_header *);
 static void		cyon_atomic_read(int, void *, u_int32_t, int);
 static void		cyon_atomic_write(int, void *, u_int32_t, int);
 static void		cyon_store_mapnode(int, struct node *);
-static struct node	*cyon_node_lookup(u_int8_t *, u_int32_t);
+static struct node	*cyon_node_lookup(u_int8_t *, u_int32_t, u_int8_t);
 static void		cyon_traverse_node(struct node *);
 static void		cyon_store_writenode(int, struct node *,
 			    u_int8_t *, u_int32_t, u_int32_t *);
@@ -150,7 +153,7 @@ cyon_store_get(u_int8_t *key, u_int32_t len, u_int8_t **out, u_int32_t *olen)
 	struct node	*p;
 
 	*out = NULL;
-	if ((p = cyon_node_lookup(key, len)) == NULL)
+	if ((p = cyon_node_lookup(key, len, CYON_RESOLVE_LINK)) == NULL)
 		return (CYON_RESULT_ERROR);
 
 	if (!(p->flags & NODE_FLAG_HASDATA))
@@ -171,7 +174,7 @@ cyon_store_getkeys(u_int8_t *root, u_int32_t rlen,
 	*olen = 0;
 	*out = NULL;
 
-	if ((p = cyon_node_lookup(root, rlen)) == NULL)
+	if ((p = cyon_node_lookup(root, rlen, CYON_RESOLVE_NOTHING)) == NULL)
 		return (CYON_RESULT_OK);
 
 	if (p->region == NULL)
@@ -201,7 +204,7 @@ cyon_store_del(u_int8_t *key, u_int32_t len)
 	u_int8_t	*old;
 	u_int32_t	offset, rlen;
 
-	if ((p = cyon_node_lookup(key, len)) == NULL)
+	if ((p = cyon_node_lookup(key, len, CYON_RESOLVE_NOTHING)) == NULL)
 		return (CYON_RESULT_ERROR);
 
 	if (!(p->flags & NODE_FLAG_HASDATA))
@@ -225,7 +228,7 @@ cyon_store_del(u_int8_t *key, u_int32_t len)
 	}
 
 	if (!replaying_log && !store_nowrite)
-		cyon_storelog_write(CYON_OP_DEL, key, len, NULL, 0);
+		cyon_storelog_write(CYON_OP_DEL, key, len, NULL, 0, 0);
 
 	return (CYON_RESULT_OK);
 }
@@ -237,7 +240,7 @@ cyon_store_replace(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 	u_int8_t	*old;
 	u_int32_t	nlen, rlen, offset;
 
-	if ((p = cyon_node_lookup(key, len)) == NULL)
+	if ((p = cyon_node_lookup(key, len, CYON_RESOLVE_NOTHING)) == NULL)
 		return (CYON_RESULT_ERROR);
 
 	if (!(p->flags & NODE_FLAG_HASDATA))
@@ -265,13 +268,14 @@ cyon_store_replace(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 	cyon_mem_free(old);
 
 	if (!replaying_log && !store_nowrite)
-		cyon_storelog_write(CYON_OP_REPLACE, key, len, data, dlen);
+		cyon_storelog_write(CYON_OP_REPLACE, key, len, data, dlen, 0);
 
 	return (CYON_RESULT_OK);
 }
 
 int
-cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
+cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
+    u_int32_t dlen, u_int32_t flags)
 {
 	struct node		*p;
 	size_t			olen, rlen;
@@ -368,7 +372,7 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 		rlen = dlen;
 	}
 
-	p->flags = NODE_FLAG_HASDATA;
+	p->flags = NODE_FLAG_HASDATA | flags;
 	rlen += sizeof(u_int32_t);
 
 	p->region = cyon_malloc(rlen);
@@ -384,7 +388,7 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 
 	key_count++;
 	if (!replaying_log && !store_nowrite)
-		cyon_storelog_write(CYON_OP_PUT, key, len, data, dlen);
+		cyon_storelog_write(CYON_OP_PUT, key, len, data, dlen, flags);
 
 	return (CYON_RESULT_OK);
 }
@@ -488,7 +492,7 @@ cyon_store_write(void)
 
 void
 cyon_storelog_write(u_int8_t op, u_int8_t *key, u_int32_t klen,
-    u_int8_t *data, u_int32_t dlen)
+    u_int8_t *data, u_int32_t dlen, u_int32_t flags)
 {
 	u_int32_t		len;
 	u_int8_t		*buf;
@@ -499,6 +503,7 @@ cyon_storelog_write(u_int8_t op, u_int8_t *key, u_int32_t klen,
 	slog.op = op;
 	slog.klen = klen;
 	slog.dlen = dlen;
+	slog.flags = flags;
 	memcpy(slog.magic, store_log_magic, 4);
 
 	len = klen + dlen + (sizeof(u_int32_t) * 2);
@@ -725,7 +730,8 @@ cyon_storelog_replay(struct store_header *header)
 			memcpy(store_passphrase, key, slog.klen);
 			break;
 		case CYON_OP_PUT:
-			if (!cyon_store_put(key, slog.klen, data, slog.dlen))
+			if (!cyon_store_put(key, slog.klen,
+			    data, slog.dlen, slog.flags))
 				fatal("replay of log failed at this stage?");
 			added++;
 			break;
@@ -855,12 +861,12 @@ cyon_atomic_read(int fd, void *buf, u_int32_t len, int calc)
 }
 
 static struct node *
-cyon_node_lookup(u_int8_t *key, u_int32_t len)
+cyon_node_lookup(u_int8_t *key, u_int32_t len, u_int8_t resolve)
 {
 	u_int32_t	i;
-	struct node	*p;
 	u_int8_t	idx;
 	u_int32_t	rlen;
+	struct node	*p, *l;
 
 	p = rnode;
 	for (i = 0; i < len; i++) {
@@ -878,6 +884,22 @@ cyon_node_lookup(u_int8_t *key, u_int32_t len)
 
 		p = (struct node *)((u_int8_t *)p->region + rlen +
 		    ((idx - p->rbase) * sizeof(struct node)));
+	}
+
+	if (resolve == CYON_RESOLVE_LINK && (p->flags & NODE_FLAG_ISLINK)) {
+		rlen = *(u_int32_t *)p->region;
+		l = cyon_node_lookup(p->region + sizeof(u_int32_t),
+		    rlen, CYON_RESOLVE_LINK);
+
+		/* XXX - this can be dealth with better. */
+		if (l == NULL || !(l->flags & NODE_FLAG_HASDATA)) {
+			if (!cyon_store_del(key, len)) {
+				cyon_log(LOG_NOTICE,
+				    "failed to remove stale link");
+			}
+		}
+
+		p = l;
 	}
 
 	return (p);

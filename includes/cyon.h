@@ -39,6 +39,7 @@
 #define CYON_OP_DEL		7
 #define CYON_OP_REPLACE		8
 #define CYON_OP_GETKEYS		9
+#define CYON_OP_MAKELINK	10
 #define CYON_OP_RESULT_OK	200
 #define CYON_OP_RESULT_ERROR	201
 
@@ -69,6 +70,8 @@ void		fatal(const char *, ...);
 #define CYON_OP_IMANODE		50
 #define CYON_OP_REPL		51
 
+#define DEBUG		1
+
 #if defined(DEBUG)
 #define cyon_debug(fmt, ...)		\
 	cyon_debug_internal(__FILE__, __LINE__, fmt, ##__VA_ARGS__)
@@ -85,6 +88,9 @@ void		fatal(const char *, ...);
 #define CYON_STORE_WRITE_FORK		1
 #define CYON_STORE_WRITE_INTERVAL	60000
 #define CYON_IDLE_TIMER_MAX		20000
+
+#define NODE_FLAG_HASDATA		0x01
+#define NODE_FLAG_ISLINK		0x02
 
 #define NETBUF_RECV		0
 #define NETBUF_SEND		1
@@ -163,7 +169,7 @@ void		cyon_strlcpy(char *, const char *, size_t);
 void		cyon_debug_internal(char *, int, const char *, ...);
 long long	cyon_strtonum(const char *, long long, long long, int *);
 void		cyon_storelog_write(u_int8_t, u_int8_t *, u_int32_t,
-		    u_int8_t *, u_int32_t );
+		    u_int8_t *, u_int32_t, u_int32_t);
 
 void		*cyon_malloc(size_t);
 void		*cyon_calloc(size_t, size_t);
@@ -204,7 +210,8 @@ int		net_recv_flush(struct connection *);
 void		cyon_store_init(void);
 pid_t		cyon_store_write(void);
 int		cyon_store_del(u_int8_t *, u_int32_t);
-int		cyon_store_put(u_int8_t *, u_int32_t, u_int8_t *, u_int32_t);
+int		cyon_store_put(u_int8_t *, u_int32_t, u_int8_t *,
+		    u_int32_t, u_int32_t);
 int		cyon_store_get(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);
 int		cyon_store_getkeys(u_int8_t *, u_int32_t,
 		    u_int8_t **, u_int32_t *);
