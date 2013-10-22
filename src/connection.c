@@ -42,8 +42,9 @@ static TAILQ_HEAD(, connection)		clients;
 void
 cyon_connection_init(void)
 {
-	TAILQ_INIT(&disconnected);
+	net_init();
 	TAILQ_INIT(&clients);
+	TAILQ_INIT(&disconnected);
 }
 
 int
@@ -136,7 +137,7 @@ cyon_connection_handle(struct connection *c)
 			return (CYON_RESULT_ERROR);
 		}
 
-		net_recv_queue(c, sizeof(struct cyon_op), 0,
+		net_recv_queue(c, sizeof(struct cyon_op), NETBUF_USE_OPPOOL,
 		    NULL, cyon_connection_recv_op);
 
 		c->state = CONN_STATE_ESTABLISHED;
@@ -145,11 +146,6 @@ cyon_connection_handle(struct connection *c)
 		if (c->flags & CONN_READ_POSSIBLE) {
 			if (!net_recv_flush(c))
 				return (CYON_RESULT_ERROR);
-
-			if (TAILQ_EMPTY(&(c->recv_queue))) {
-				net_recv_queue(c, sizeof(struct cyon_op), 0,
-				    NULL, cyon_connection_recv_op);
-			}
 		}
 
 		if (c->flags & CONN_WRITE_POSSIBLE) {
@@ -185,14 +181,17 @@ cyon_connection_remove(struct connection *c)
 		TAILQ_REMOVE(&(c->send_queue), nb, list);
 		if (nb->buf != NULL)
 			cyon_mem_free(nb->buf);
-		cyon_mem_free(nb);
+		pool_put(&nb_pool, nb);
 	}
 
 	for (nb = TAILQ_FIRST(&(c->recv_queue)); nb != NULL; nb = next) {
 		next = TAILQ_NEXT(nb, list);
 		TAILQ_REMOVE(&(c->recv_queue), nb, list);
-		cyon_mem_free(nb->buf);
-		cyon_mem_free(nb);
+		if (nb->flags & NETBUF_USE_OPPOOL)
+			pool_put(&op_pool, nb->buf);
+		else
+			cyon_mem_free(nb->buf);
+		pool_put(&nb_pool, nb);
 	}
 
 	cyon_mem_free(c);
@@ -340,6 +339,9 @@ cyon_connection_recv_op(struct netbuf *nb)
 		break;
 	}
 
+	net_recv_queue(c, sizeof(struct cyon_op), NETBUF_USE_OPPOOL,
+	    NULL, cyon_connection_recv_op);
+
 	return (r);
 }
 
@@ -375,9 +377,6 @@ cyon_connection_recv_put(struct netbuf *nb)
 
 	ret.length = 0;
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
-	net_recv_queue(c, sizeof(struct cyon_op), 0,
-	    NULL, cyon_connection_recv_op);
-
 	return (net_send_flush(c));
 }
 

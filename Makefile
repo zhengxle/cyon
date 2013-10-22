@@ -3,7 +3,7 @@
 CC=gcc
 
 S_SRC=	src/cyon.c src/connection.c src/net.c src/mem.c \
-	src/shared.c src/store.c src/utils.c src/linux.c
+	src/shared.c src/store.c src/utils.c src/linux.c src/pool.c
 S_OBJS=	$(S_SRC:.c=.o)
 
 C_SRC=	src/cli.c src/shared.c

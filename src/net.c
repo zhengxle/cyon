@@ -18,6 +18,16 @@
 
 #include "cyon.h"
 
+struct pool		nb_pool;
+struct pool		op_pool;
+
+void
+net_init(void)
+{
+	pool_init(&nb_pool, "nb_pool", sizeof(struct netbuf), 1000);
+	pool_init(&op_pool, "op_pool", sizeof(struct cyon_op), 1000);
+}
+
 void
 net_send_queue(struct connection *c, u_int8_t *data, u_int32_t len)
 {
@@ -42,7 +52,7 @@ net_send_queue(struct connection *c, u_int8_t *data, u_int32_t len)
 		}
 	}
 
-	nb = cyon_malloc(sizeof(struct netbuf));
+	nb = pool_get(&nb_pool);
 	nb->flags = 0;
 	nb->cb = NULL;
 	nb->owner = c;
@@ -68,7 +78,7 @@ net_recv_queue(struct connection *c, size_t len, int flags,
 {
 	struct netbuf		*nb;
 
-	nb = cyon_malloc(sizeof(struct netbuf));
+	nb = pool_get(&nb_pool);
 	nb->cb = cb;
 	nb->b_len = len;
 	nb->m_len = len;
@@ -76,7 +86,11 @@ net_recv_queue(struct connection *c, size_t len, int flags,
 	nb->s_off = 0;
 	nb->flags = flags;
 	nb->type = NETBUF_RECV;
-	nb->buf = cyon_malloc(nb->b_len);
+
+	if (flags & NETBUF_USE_OPPOOL)
+		nb->buf = pool_get(&op_pool);
+	else
+		nb->buf = cyon_malloc(nb->b_len);
 
 	TAILQ_INSERT_TAIL(&(c->recv_queue), nb, list);
 	if (out != NULL)
@@ -87,6 +101,8 @@ int
 net_recv_expand(struct connection *c, struct netbuf *nb, size_t len,
     int (*cb)(struct netbuf *))
 {
+	u_int8_t	*p;
+
 	if (nb->type != NETBUF_RECV) {
 		cyon_debug("net_recv_expand(): wrong netbuf type");
 		return (CYON_RESULT_ERROR);
@@ -95,7 +111,16 @@ net_recv_expand(struct connection *c, struct netbuf *nb, size_t len,
 	nb->cb = cb;
 	nb->b_len += len;
 	nb->m_len = nb->b_len;
-	nb->buf = cyon_realloc(nb->buf, nb->b_len);
+
+	if (nb->flags & NETBUF_USE_OPPOOL) {
+		p = cyon_malloc(nb->b_len);
+		memcpy(p, nb->buf, nb->s_off);
+		pool_put(&op_pool, nb->buf);
+		nb->buf = p;
+		nb->flags &= ~NETBUF_USE_OPPOOL;
+	} else {
+		nb->buf = cyon_realloc(nb->buf, nb->b_len);
+	}
 
 	TAILQ_REMOVE(&(c->recv_queue), nb, list);
 	TAILQ_INSERT_HEAD(&(c->recv_queue), nb, list);
@@ -141,7 +166,7 @@ net_send(struct connection *c)
 			TAILQ_REMOVE(&(c->send_queue), nb, list);
 
 			cyon_mem_free(nb->buf);
-			cyon_mem_free(nb);
+			pool_put(&nb_pool, nb);
 		}
 	}
 
@@ -175,6 +200,7 @@ net_recv(struct connection *c)
 			return (CYON_RESULT_ERROR);
 		}
 
+again:
 		r = SSL_read(c->ssl,
 		    (nb->buf + nb->s_off), (nb->b_len - nb->s_off));
 
@@ -200,12 +226,18 @@ net_recv(struct connection *c)
 			if (nb->s_off == nb->b_len) {
 				TAILQ_REMOVE(&(c->recv_queue), nb, list);
 
-				cyon_mem_free(nb->buf);
-				cyon_mem_free(nb);
+				if (nb->flags & NETBUF_USE_OPPOOL)
+					pool_put(&op_pool, nb->buf);
+				else
+					cyon_mem_free(nb->buf);
+				pool_put(&nb_pool, nb);
 			}
 
 			if (r != CYON_RESULT_OK)
 				return (r);
+
+			if (nb->s_off != nb->b_len)
+				goto again;
 		}
 	}
 

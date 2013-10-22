@@ -93,7 +93,7 @@ void		fatal(const char *, ...);
 
 #define NETBUF_CALL_CB_ALWAYS		0x01
 #define NETBUF_FORCE_REMOVE		0x02
-#define NETBUF_USE_DATA_DIRECT		0x04
+#define NETBUF_USE_OPPOOL		0x04
 
 #define CYON_LOG_FILE			"%s/%s.log"
 #define CYON_WRITELOG_FILE		"%s/%s.write.log"
@@ -116,6 +116,29 @@ struct netbuf {
 };
 
 TAILQ_HEAD(netbuf_head, netbuf);
+
+struct pool_region {
+	void			*start;
+
+	LIST_ENTRY(pool_region)	list;
+} __attribute__((__packed__));
+
+struct pool_entry {
+	u_int8_t			state;
+	struct pool_region		*region;
+	LIST_ENTRY(pool_entry)		list;
+} __attribute__((__packed__));
+
+struct pool {
+	u_int32_t		elen;
+	u_int32_t		slen;
+	u_int32_t		elms;
+	u_int32_t		inuse;
+	char			*name;
+
+	LIST_HEAD(, pool_region)	regions;
+	LIST_HEAD(, pool_entry)		freelist;
+} __attribute__((__packed__));
 
 #define CONN_STATE_UNKNOWN		0
 #define CONN_STATE_SSL_SHAKE		1
@@ -153,6 +176,8 @@ struct connection {
 };
 
 extern struct listener		server;
+extern struct pool		nb_pool;
+extern struct pool		op_pool;
 extern SSL_CTX			*ssl_ctx;
 extern u_int64_t		meminuse;
 extern u_int64_t		key_count;
@@ -201,6 +226,7 @@ void		cyon_platform_event_init(void);
 void		cyon_platform_event_wait(void);
 void		cyon_platform_event_schedule(int, int, int, void *);
 
+void		net_init(void);
 void		net_send_queue(struct connection *, u_int8_t *, u_int32_t);
 void		net_recv_queue(struct connection *, size_t, int,
 		    struct netbuf **, int (*cb)(struct netbuf *));
@@ -223,9 +249,9 @@ int		cyon_store_getkeys(u_int8_t *, u_int32_t,
 int		cyon_store_replace(u_int8_t *, u_int32_t,
 		    u_int8_t *, u_int32_t);
 
-void		cyon_cluster_init(void);
-void		cyon_cluster_join(const char *);
-void		cyon_cluster_node_register(struct connection *, int);
+void		*pool_get(struct pool *);
+void		pool_put(struct pool *, void *);
+void		pool_init(struct pool *, char *, u_int32_t, u_int32_t);
 
 #endif /* CYON_SERVER */
 
