@@ -210,6 +210,9 @@ cyon_store_del(u_int8_t *key, u_int32_t len)
 	if (!(p->flags & NODE_FLAG_HASDATA))
 		return (CYON_RESULT_ERROR);
 
+	if (!replaying_log && !store_nowrite)
+		cyon_storelog_write(CYON_OP_DEL, key, len, NULL, 0, 0);
+
 	key_count--;
 	p->flags = 0;
 
@@ -227,9 +230,6 @@ cyon_store_del(u_int8_t *key, u_int32_t len)
 		cyon_mem_free(old);
 	}
 
-	if (!replaying_log && !store_nowrite)
-		cyon_storelog_write(CYON_OP_DEL, key, len, NULL, 0, 0);
-
 	return (CYON_RESULT_OK);
 }
 
@@ -245,6 +245,9 @@ cyon_store_replace(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 
 	if (!(p->flags & NODE_FLAG_HASDATA))
 		return (CYON_RESULT_ERROR);
+
+	if (!replaying_log && !store_nowrite)
+		cyon_storelog_write(CYON_OP_REPLACE, key, len, data, dlen, 0);
 
 	old = p->region;
 	if (p->rbase == 0 && p->rtop == 0) {
@@ -266,9 +269,6 @@ cyon_store_replace(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 	}
 
 	cyon_mem_free(old);
-
-	if (!replaying_log && !store_nowrite)
-		cyon_storelog_write(CYON_OP_REPLACE, key, len, data, dlen, 0);
 
 	return (CYON_RESULT_OK);
 }
@@ -362,6 +362,9 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
 	if (p->flags & NODE_FLAG_HASDATA)
 		return (CYON_RESULT_ERROR);
 
+	if (!replaying_log && !store_nowrite)
+		cyon_storelog_write(CYON_OP_PUT, key, len, data, dlen, flags);
+
 	old = p->region;
 
 	if (old != NULL) {
@@ -387,8 +390,6 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
 	}
 
 	key_count++;
-	if (!replaying_log && !store_nowrite)
-		cyon_storelog_write(CYON_OP_PUT, key, len, data, dlen, flags);
 
 	return (CYON_RESULT_OK);
 }
