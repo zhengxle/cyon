@@ -499,6 +499,9 @@ cyon_storelog_write(u_int8_t op, u_int8_t *key, u_int32_t klen,
 	u_int8_t		*buf;
 	struct store_log	slog;
 
+	if (store_nowrite)
+		return;
+
 	memset(&slog, 0, sizeof(slog));
 
 	slog.op = op;
