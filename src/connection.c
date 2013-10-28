@@ -324,9 +324,6 @@ cyon_connection_recv_op(struct netbuf *nb)
 		r = CYON_RESULT_OK;
 		cyon_connection_recv_stats(c);
 		break;
-	case CYON_OP_IMANODE:
-		cyon_cluster_node_register(c, 1);
-		return (CYON_RESULT_OK);
 	default:
 		cyon_debug("unknown cyon_op %d", op->op);
 		break;

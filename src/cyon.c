@@ -38,7 +38,6 @@ static struct {
 } use_options[] = {
 	{ 'b',	"ip",		"Bind to the given IP address" },
 	{ 'f',	NULL,		"Runs cyon in foreground mode" },
-	{ 'j',	"node",		"Join cluster using given node address" },
 	{ 'n',	NULL,		"No data persistence" },
 	{ 'p',	"port",		"Use given port to listen for connections" },
 	{ 's',	"storedir",	"Directory where all data is stored" },
@@ -64,18 +63,16 @@ main(int argc, char *argv[])
 	char		*ip;
 	u_int64_t	now;
 	u_int16_t	port;
-	char		*jnode;
 	int		ch, err;
 	u_int8_t	foreground;
 	u_int64_t	last_storelog_flush, idle_check;
 
 	port = 3331;
-	jnode = NULL;
 	foreground = 0;
 	storepath = NULL;
 	ip = "127.0.0.1";
 
-	while ((ch = getopt(argc, argv, "b:fi:j:np:s:w:")) != -1) {
+	while ((ch = getopt(argc, argv, "b:fi:np:s:w:")) != -1) {
 		switch (ch) {
 		case 'b':
 			ip = optarg;
@@ -89,9 +86,6 @@ main(int argc, char *argv[])
 			if (err != CYON_RESULT_OK)
 				fatal("Invalid timeout value: %s", optarg);
 			idle_timeout = idle_timeout * 1000;
-			break;
-		case 'j':
-			jnode = optarg;
 			break;
 		case 'n':
 			store_nowrite = 1;
@@ -128,13 +122,9 @@ main(int argc, char *argv[])
 	cyon_log_init();
 	cyon_mem_init();
 	cyon_ssl_init();
-	cyon_cluster_init();
 	cyon_connection_init();
 	cyon_server_bind(&server, ip, port);
 	cyon_platform_event_init();
-
-	if (jnode != NULL)
-		cyon_cluster_join(jnode);
 
 	if (foreground == 0)
 		printf("cyon daemonizing, check system log for details\n");
