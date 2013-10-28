@@ -20,6 +20,7 @@
 #include <openssl/sha.h>
 
 #include <endian.h>
+#include <inttypes.h>
 #include <netdb.h>
 #include <fcntl.h>
 #include <stdarg.h>
@@ -51,7 +52,6 @@ void		cyon_cli_stats(u_int8_t, char **);
 void		cyon_cli_write(u_int8_t, char **);
 void		cyon_cli_setauth(u_int8_t, char **);
 void		cyon_cli_getkeys(u_int8_t, char **);
-void		cyon_cli_test(u_int8_t, char **);
 
 int		quit = 0;
 int		cfd = -1;
@@ -72,7 +72,6 @@ struct {
 	{ "set-auth",		cyon_cli_setauth },
 	{ "replace",		cyon_cli_upload },
 	{ "getkeys",		cyon_cli_getkeys },
-	{ "test",		cyon_cli_test },
 	{ "makelink",		cyon_cli_upload },
 	{ NULL,		NULL },
 };
@@ -473,57 +472,6 @@ cyon_cli_upload(u_int8_t argc, char **argv)
 }
 
 void
-cyon_cli_test(u_int8_t argc, char **argv)
-{
-	ssize_t		r;
-	struct stat	st;
-	u_int8_t	*data;
-	char		key[64];
-	u_int32_t	i, dlen;
-	int		fd;
-
-	if (argc != 2) {
-		printf("test [root]\n");
-		return;
-	}
-
-	if ((fd = open("test.txt", O_RDONLY)) == -1) {
-		printf("no test.txt found\n");
-		return;
-	}
-
-	if (fstat(fd, &st) == -1) {
-		printf("cannot get test.txt filesize\n");
-		close(fd);
-		return;
-	}
-
-	dlen = st.st_size;
-	if ((data = malloc(dlen)) == NULL)
-		fatal("malloc()");
-
-	r = read(fd, data, dlen);
-	if (r != dlen)
-		fatal("not all of test.txt read");
-
-	close(fd);
-
-	printf("adding 1000000 keys with %d bytes of data\n", dlen);
-
-	for (i = 0; i < 1000000; i++) {
-		snprintf(key, sizeof(key), "%s_%d", argv[1], i);
-		if (!cyon_upload(CYON_OP_PUT, (u_int8_t *)key,
-		    strlen(key), data, dlen)) {
-			printf("cannot upload %s\n", key);
-		} else {
-			printf("%s\n", key);
-		}
-	}
-
-	printf("done adding %d keys\n", i);
-}
-
-void
 cyon_cli_get(u_int8_t argc, char **argv)
 {
 	ssize_t		r;
@@ -581,10 +529,8 @@ cyon_cli_getkeys(u_int8_t argc, char **argv)
 		return;
 	}
 
-	count = net_read32(out);
-	printf("got %d bytes - received %d keys\n", len, count);
-
 	i = 0;
+	count = net_read32(out);
 	p = out + sizeof(u_int32_t);
 	while (i < count && p < (out + len)) {
 		klen = net_read16(p);
@@ -603,6 +549,7 @@ cyon_cli_getkeys(u_int8_t argc, char **argv)
 		i++;
 	}
 
+	printf("got %d bytes - received %d keys\n", len, count);
 	free(out);
 }
 
@@ -661,8 +608,8 @@ cyon_cli_stats(u_int8_t argc, char **argv)
 	stats.keycount = be64toh(stats.keycount);
 	stats.meminuse = be64toh(stats.meminuse);
 
-	printf("Memory in use:    %lu bytes\n", stats.meminuse);
-	printf("Keys in store:    %lu keys\n", stats.keycount);
+	printf("Memory in use:    %" PRIu64 " bytes\n", stats.meminuse);
+	printf("Keys in store:    %" PRIu64 " keys\n", stats.keycount);
 }
 
 void
@@ -691,6 +638,7 @@ cyon_cli_setauth(u_int8_t argc, char **argv)
 	SHA256_Final((u_char *)p + sizeof(struct cyon_op), &sha256ctx);
 
 	cyon_ssl_write(p, len);
+	free(p);
 
 	memset(&ret, 0, sizeof(ret));
 	cyon_ssl_read(&ret, sizeof(struct cyon_op));

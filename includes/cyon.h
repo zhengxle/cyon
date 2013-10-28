@@ -86,6 +86,7 @@ void		fatal(const char *, ...);
 
 #define NODE_FLAG_HASDATA		0x01
 #define NODE_FLAG_ISLINK		0x02
+#define NODE_FLAG_ISCOLLECTION		0x04
 
 #define NETBUF_RECV		0
 #define NETBUF_SEND		1
