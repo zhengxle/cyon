@@ -14,36 +14,52 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <sys/param.h>
+
 #include "cyon.h"
 
 void
-net_send_queue(struct connection *c, u_int8_t *data, size_t len, int flags,
-    struct netbuf **out, int (*cb)(struct netbuf *))
+net_send_queue(struct connection *c, u_int8_t *data, u_int32_t len)
 {
 	struct netbuf		*nb;
+	u_int32_t		avail;
 
-	nb = (struct netbuf *)cyon_malloc(sizeof(*nb));
-	nb->cb = cb;
-	nb->len = len;
-	nb->owner = c;
-	nb->offset = 0;
-	nb->flags = flags;
-	nb->type = NETBUF_SEND;
+	nb = TAILQ_LAST(&(c->send_queue), netbuf_head);
+	if (nb != NULL && nb->b_len < nb->m_len) {
+		avail = nb->m_len - nb->b_len;
+		if (len < avail) {
+			memcpy(nb->buf + nb->b_len, data, len);
+			nb->b_len += len;
+			return;
+		} else if (len > avail) {
+			memcpy(nb->buf + nb->b_len, data, avail);
+			nb->b_len += avail;
 
-	if (len > 0) {
-		if (flags & NETBUF_USE_DATA_DIRECT) {
-			nb->buf = data;
-		} else {
-			nb->buf = (u_int8_t *)cyon_malloc(nb->len);
-			memcpy(nb->buf, data, nb->len);
+			len -= avail;
+			data += avail;
+			if (len == 0)
+				return;
 		}
-	} else {
-		nb->buf = NULL;
 	}
 
+	nb = cyon_malloc(sizeof(struct netbuf));
+	nb->flags = 0;
+	nb->cb = NULL;
+	nb->owner = c;
+	nb->s_off = 0;
+	nb->b_len = len;
+	nb->type = NETBUF_SEND;
+
+	if (nb->b_len < NETBUF_SEND_PAYLOAD_MAX)
+		nb->m_len = NETBUF_SEND_PAYLOAD_MAX;
+	else
+		nb->m_len = nb->b_len;
+
+	nb->buf = cyon_malloc(nb->m_len);
+	if (len > 0)
+		memcpy(nb->buf, data, nb->b_len);
+
 	TAILQ_INSERT_TAIL(&(c->send_queue), nb, list);
-	if (out != NULL)
-		*out = nb;
 }
 
 void
@@ -52,14 +68,15 @@ net_recv_queue(struct connection *c, size_t len, int flags,
 {
 	struct netbuf		*nb;
 
-	nb = (struct netbuf *)cyon_malloc(sizeof(*nb));
+	nb = cyon_malloc(sizeof(struct netbuf));
 	nb->cb = cb;
-	nb->len = len;
+	nb->b_len = len;
+	nb->m_len = len;
 	nb->owner = c;
-	nb->offset = 0;
+	nb->s_off = 0;
 	nb->flags = flags;
 	nb->type = NETBUF_RECV;
-	nb->buf = (u_int8_t *)cyon_malloc(nb->len);
+	nb->buf = cyon_malloc(nb->b_len);
 
 	TAILQ_INSERT_TAIL(&(c->recv_queue), nb, list);
 	if (out != NULL)
@@ -76,8 +93,9 @@ net_recv_expand(struct connection *c, struct netbuf *nb, size_t len,
 	}
 
 	nb->cb = cb;
-	nb->len += len;
-	nb->buf = (u_int8_t *)cyon_realloc(nb->buf, nb->len);
+	nb->b_len += len;
+	nb->m_len = nb->b_len;
+	nb->buf = cyon_realloc(nb->buf, nb->b_len);
 
 	TAILQ_REMOVE(&(c->recv_queue), nb, list);
 	TAILQ_INSERT_HEAD(&(c->recv_queue), nb, list);
@@ -90,51 +108,40 @@ net_send(struct connection *c)
 {
 	int			r;
 	struct netbuf		*nb;
+	u_int32_t		len;
 
 	while (!TAILQ_EMPTY(&(c->send_queue))) {
 		nb = TAILQ_FIRST(&(c->send_queue));
-		if (nb->len == 0) {
-			cyon_debug("net_send(): len is 0");
-			return (CYON_RESULT_ERROR);
-		}
+		if (nb->b_len != 0) {
+			len = MIN(NETBUF_SEND_PAYLOAD_MAX,
+			    nb->b_len - nb->s_off);
+			r = SSL_write(c->ssl, (nb->buf + nb->s_off), len);
 
-		r = SSL_write(c->ssl,
-		    (nb->buf + nb->offset), (nb->len - nb->offset));
+			cyon_debug("net_send(%d/%d bytes), progress with %d",
+			    nb->s_off, nb->b_len, r);
 
-		cyon_debug("net_send(%ld/%ld bytes), progress with %d",
-		    nb->offset, nb->len, r);
-
-		if (r <= 0) {
-			r = SSL_get_error(c->ssl, r);
-			switch (r) {
-			case SSL_ERROR_WANT_READ:
-			case SSL_ERROR_WANT_WRITE:
-				c->flags &= ~CONN_WRITE_POSSIBLE;
-				return (CYON_RESULT_OK);
-			default:
-				cyon_debug("SSL_write(): %s", ssl_errno_s);
-				return (CYON_RESULT_ERROR);
+			if (r <= 0) {
+				r = SSL_get_error(c->ssl, r);
+				switch (r) {
+				case SSL_ERROR_WANT_READ:
+				case SSL_ERROR_WANT_WRITE:
+					c->flags &= ~CONN_WRITE_POSSIBLE;
+					return (CYON_RESULT_OK);
+				default:
+					cyon_debug("SSL_write(): %s",
+					    ssl_errno_s);
+					return (CYON_RESULT_ERROR);
+				}
 			}
+
+			nb->s_off += (size_t)r;
 		}
 
-		nb->offset += (size_t)r;
-		if (nb->offset == nb->len) {
+		if (nb->s_off == nb->b_len) {
 			TAILQ_REMOVE(&(c->send_queue), nb, list);
 
-			if (nb->cb != NULL)
-				r = nb->cb(nb);
-			else
-				r = CYON_RESULT_OK;
-
-			if (nb->offset == nb->len) {
-				if (nb->buf != NULL &&
-				    !(nb->flags & NETBUF_USE_DATA_DIRECT))
-					cyon_mem_free(nb->buf);
-				cyon_mem_free(nb);
-			}
-
-			if (r != CYON_RESULT_OK)
-				return (r);
+			cyon_mem_free(nb->buf);
+			cyon_mem_free(nb);
 		}
 	}
 
@@ -169,10 +176,10 @@ net_recv(struct connection *c)
 		}
 
 		r = SSL_read(c->ssl,
-		    (nb->buf + nb->offset), (nb->len - nb->offset));
+		    (nb->buf + nb->s_off), (nb->b_len - nb->s_off));
 
 		cyon_debug("net_recv(%ld/%ld bytes), progress with %d",
-		    nb->offset, nb->len, r);
+		    nb->s_off, nb->b_len, r);
 
 		if (r <= 0) {
 			r = SSL_get_error(c->ssl, r);
@@ -187,10 +194,10 @@ net_recv(struct connection *c)
 			}
 		}
 
-		nb->offset += (size_t)r;
-		if (nb->offset == nb->len) {
+		nb->s_off += (size_t)r;
+		if (nb->s_off == nb->b_len) {
 			r = nb->cb(nb);
-			if (nb->offset == nb->len) {
+			if (nb->s_off == nb->b_len) {
 				TAILQ_REMOVE(&(c->recv_queue), nb, list);
 
 				cyon_mem_free(nb->buf);

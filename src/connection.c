@@ -17,6 +17,8 @@
 #include <sys/param.h>
 #include <sys/socket.h>
 
+#include <netinet/tcp.h>
+
 #include <endian.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -29,7 +31,6 @@ static int		cyon_connection_recv_get(struct netbuf *);
 static int		cyon_connection_recv_del(struct netbuf *);
 static int		cyon_connection_recv_replace(struct netbuf *);
 static int		cyon_connection_recv_auth(struct netbuf *);
-static int		cyon_connection_terminate(struct netbuf *);
 static int		cyon_connection_recv_setauth(struct netbuf *);
 static int		cyon_connection_recv_getkeys(struct netbuf *);
 static void		cyon_connection_recv_stats(struct connection *);
@@ -269,6 +270,11 @@ cyon_connection_nonblock(int fd)
 		return (CYON_RESULT_ERROR);
 	}
 
+	flags = 1;
+	if (setsockopt(fd, IPPROTO_TCP,
+	    TCP_NODELAY, (char *)&flags, sizeof(flags)) == -1)
+		cyon_log(LOG_NOTICE, "failed to set TCP_NODELAY on %d", fd);
+
 	return (CYON_RESULT_OK);
 }
 
@@ -329,6 +335,9 @@ cyon_connection_recv_op(struct netbuf *nb)
 		break;
 	}
 
+	if (r == CYON_RESULT_OK)
+		net_send_flush(c);
+
 	net_recv_queue(c, sizeof(struct cyon_op), 0,
 	    NULL, cyon_connection_recv_op);
 
@@ -366,7 +375,7 @@ cyon_connection_recv_put(struct netbuf *nb)
 		ret.op = CYON_OP_RESULT_ERROR;
 
 	ret.length = 0;
-	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
 
 	return (CYON_RESULT_OK);
 }
@@ -392,13 +401,12 @@ cyon_connection_recv_get(struct netbuf *nb)
 		ret.op = CYON_OP_RESULT_OK;
 		net_write32((u_int8_t *)&(ret.length), dlen);
 
-		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
-		net_send_queue(c, data, dlen,
-		    NETBUF_USE_DATA_DIRECT, NULL, NULL);
+		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
+		net_send_queue(c, data, dlen);
 	} else {
 		ret.op = CYON_OP_RESULT_ERROR;
 		net_write32((u_int8_t *)&(ret.length), 0);
-		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
+		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
 	}
 
 	return (CYON_RESULT_OK);
@@ -423,17 +431,14 @@ cyon_connection_recv_getkeys(struct netbuf *nb)
 		ret.op = CYON_OP_RESULT_OK;
 		net_write32((u_int8_t *)&(ret.length), olen);
 
-		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
+		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
 
-		if (olen > 0) {
-			net_send_queue(c, out, olen,
-			    NETBUF_USE_DATA_DIRECT, NULL, NULL);
-		}
-
+		if (olen > 0)
+			net_send_queue(c, out, olen);
 	} else {
 		ret.op = CYON_OP_RESULT_ERROR;
 		net_write32((u_int8_t *)&(ret.length), 0);
-		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
+		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
 	}
 
 	return (CYON_RESULT_OK);
@@ -462,7 +467,7 @@ cyon_connection_recv_del(struct netbuf *nb)
 		ret.op = CYON_OP_RESULT_ERROR;
 
 	net_write32((u_int8_t *)&(ret.length), 0);
-	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
 	return (CYON_RESULT_OK);
 }
 
@@ -491,7 +496,7 @@ cyon_connection_recv_replace(struct netbuf *nb)
 		ret.op = CYON_OP_RESULT_ERROR;
 
 	ret.length = 0;
-	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
 
 	return (CYON_RESULT_OK);
 }
@@ -503,7 +508,6 @@ cyon_connection_recv_auth(struct netbuf *nb)
 	struct cyon_op		*op, ret;
 	SHA256_CTX		sha256ctx;
 	u_int8_t		*passphrase;
-	int			(*cb)(struct netbuf *);
 	u_char			hash[SHA256_DIGEST_LENGTH];
 	struct connection	*c = (struct connection *)nb->owner;
 
@@ -529,19 +533,21 @@ cyon_connection_recv_auth(struct netbuf *nb)
 	if ((store_passphrase != NULL &&
 	    !memcmp(store_passphrase, hash, SHA256_DIGEST_LENGTH)) ||
 	    (store_passphrase == NULL && klen == 0)) {
-		cb = NULL;
 		ret.op = CYON_OP_RESULT_OK;
 		c->flags |= CONN_AUTHENTICATED;
 		cyon_log(LOG_NOTICE, "connection from %s is now authenticated",
 		    inet_ntoa(c->sin.sin_addr));
 	} else {
-		cb = cyon_connection_terminate;
 		ret.op = CYON_OP_RESULT_ERROR;
 		cyon_log(LOG_NOTICE, "failed authentication from %s",
 		    inet_ntoa(c->sin.sin_addr));
 	}
 
-	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, cb);
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
+	if (ret.op != CYON_OP_RESULT_OK) {
+		net_send_flush(c);
+		cyon_connection_disconnect(c);
+	}
 
 	return (CYON_RESULT_OK);
 }
@@ -572,19 +578,10 @@ cyon_connection_recv_setauth(struct netbuf *nb)
 	ret.op = CYON_OP_RESULT_OK;
 	net_write32((u_int8_t *)&(ret.length), 0);
 
-	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
 	cyon_storelog_write(CYON_OP_SETAUTH,
 	    store_passphrase, SHA256_DIGEST_LENGTH, NULL, 0, 0);
 
-	return (CYON_RESULT_OK);
-}
-
-static int
-cyon_connection_terminate(struct netbuf *nb)
-{
-	struct connection	*c = (struct connection *)nb->owner;
-
-	cyon_connection_disconnect(c);
 	return (CYON_RESULT_OK);
 }
 
@@ -598,7 +595,7 @@ cyon_connection_recv_write(struct connection *c)
 
 	cyon_storewrite_start();
 	ret.op = CYON_OP_RESULT_OK;
-	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
 }
 
 static void
@@ -613,6 +610,6 @@ cyon_connection_recv_stats(struct connection *c)
 	stats.keycount = htobe64(key_count);
 	stats.meminuse = htobe64(meminuse);
 
-	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0, NULL, NULL);
-	net_send_queue(c, (u_int8_t *)&stats, sizeof(stats), 0, NULL, NULL);
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
+	net_send_queue(c, (u_int8_t *)&stats, sizeof(stats));
 }

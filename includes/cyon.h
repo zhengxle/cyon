@@ -88,8 +88,9 @@ void		fatal(const char *, ...);
 #define NODE_FLAG_ISLINK		0x02
 #define NODE_FLAG_ISCOLLECTION		0x04
 
-#define NETBUF_RECV		0
-#define NETBUF_SEND		1
+#define NETBUF_RECV			0
+#define NETBUF_SEND			1
+#define NETBUF_SEND_PAYLOAD_MAX		4000
 
 #define NETBUF_CALL_CB_ALWAYS		0x01
 #define NETBUF_FORCE_REMOVE		0x02
@@ -97,8 +98,9 @@ void		fatal(const char *, ...);
 
 struct netbuf {
 	u_int8_t		*buf;
-	u_int32_t		offset;
-	u_int32_t		len;
+	u_int32_t		s_off;
+	u_int32_t		b_len;
+	u_int32_t		m_len;
 	u_int8_t		type;
 	u_int8_t		flags;
 
@@ -108,6 +110,8 @@ struct netbuf {
 
 	TAILQ_ENTRY(netbuf)	list;
 };
+
+TAILQ_HEAD(netbuf_head, netbuf);
 
 #define CONN_STATE_UNKNOWN		0
 #define CONN_STATE_SSL_SHAKE		1
@@ -191,8 +195,7 @@ void		cyon_platform_event_init(void);
 void		cyon_platform_event_wait(void);
 void		cyon_platform_event_schedule(int, int, int, void *);
 
-void		net_send_queue(struct connection *, u_int8_t *,
-		    size_t, int, struct netbuf **, int (*cb)(struct netbuf *));
+void		net_send_queue(struct connection *, u_int8_t *, u_int32_t);
 void		net_recv_queue(struct connection *, size_t, int,
 		    struct netbuf **, int (*cb)(struct netbuf *));
 int		net_recv_expand(struct connection *, struct netbuf *,
