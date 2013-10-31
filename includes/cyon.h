@@ -86,7 +86,6 @@ void		fatal(const char *, ...);
 
 #define NODE_FLAG_HASDATA		0x01
 #define NODE_FLAG_ISLINK		0x02
-#define NODE_FLAG_ISCOLLECTION		0x04
 
 #define NETBUF_RECV			0
 #define NETBUF_SEND			1
@@ -153,6 +152,7 @@ extern SSL_CTX			*ssl_ctx;
 extern u_int64_t		meminuse;
 extern u_int64_t		key_count;
 extern char			*storepath;
+extern char			*storename;
 extern u_int32_t		idle_timeout;
 extern u_int64_t		last_store_write;
 extern u_char			*store_passphrase;
@@ -162,6 +162,7 @@ extern u_int8_t			server_started;
 u_int64_t	cyon_time_ms(void);
 u_int64_t	cyon_time_us(void);
 void		cyon_log_init(void);
+void		cyon_storelog_init(void);
 void		cyon_storelog_flush(void);
 void		cyon_storewrite_start(void);
 void		cyon_log(int, const char *, ...);

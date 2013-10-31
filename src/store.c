@@ -38,9 +38,10 @@
 #define CYON_NO_CHECKSUM		0
 #define CYON_ADD_CHECKSUM		1
 
-#define CYON_LOG_FILE			"cyon.log"
-#define CYON_STORE_FILE			"cyon.store"
-#define CYON_STORE_TMPFILE		"cyon.store.tmp"
+#define CYON_LOG_FILE			"%s/%s.log"
+#define CYON_WRITELOG_FILE		"%s/%s.write.log"
+#define CYON_STORE_FILE			"%s/%s.store"
+#define CYON_STORE_TMPFILE		"%s/%s.store.tmp"
 
 #define CYON_RESOLVE_NOTHING		0
 #define CYON_RESOLVE_LINK		1
@@ -83,6 +84,7 @@ static void		cyon_store_writenode(int, struct node *,
 
 u_int64_t		key_count;
 char			*storepath;
+char			*storename;
 u_int8_t		store_nowrite;
 u_char			*store_passphrase;
 
@@ -105,9 +107,6 @@ static u_int32_t	traverse_key_off = 0;
 void
 cyon_store_init(void)
 {
-	struct stat	st;
-	char		fpath[MAXPATHLEN];
-
 	lfd = -1;
 	rnode = NULL;
 	key_count = 0;
@@ -134,17 +133,8 @@ cyon_store_init(void)
 		    "store loaded from disk with %ld keys", key_count);
 	}
 
-	if (!store_nowrite) {
-		snprintf(fpath, sizeof(fpath),
-		    "%s/%s", storepath, CYON_LOG_FILE);
-		lfd = open(fpath, O_CREAT | O_APPEND | O_WRONLY, 0700);
-		if (lfd == -1)
-			fatal("could not open logfile: %s", errno_s);
-		if (fstat(lfd, &st) == -1)
-			fatal("fstat(lfd): %s", errno_s);
-
-		store_log_offset = st.st_size;
-	}
+	if (!store_nowrite)
+		cyon_storelog_init();
 }
 
 int
@@ -412,6 +402,27 @@ cyon_storelog_flush(void)
 	}
 }
 
+void
+cyon_storelog_init(void)
+{
+	struct stat	st;
+	char		fpath[MAXPATHLEN];
+
+	if (lfd != -1) {
+		cyon_storelog_flush();
+		close(lfd);
+	}
+
+	snprintf(fpath, sizeof(fpath), CYON_LOG_FILE, storepath, storename);
+	lfd = open(fpath, O_CREAT | O_APPEND | O_WRONLY, 0700);
+	if (lfd == -1)
+		fatal("could not open logfile: %s", errno_s);
+	if (fstat(lfd, &st) == -1)
+		fatal("fstat(lfd): %s", errno_s);
+
+	store_log_offset = st.st_size;
+}
+
 pid_t
 cyon_store_write(void)
 {
@@ -438,8 +449,9 @@ cyon_store_write(void)
 		return (pid);
 	}
 
-	snprintf(fpath, sizeof(fpath), "%s/%s", storepath, CYON_STORE_FILE);
-	snprintf(tpath, sizeof(tpath), "%s/%s", storepath, CYON_STORE_TMPFILE);
+	snprintf(fpath, sizeof(fpath), CYON_STORE_FILE, storepath, storename);
+	snprintf(tpath, sizeof(tpath), CYON_STORE_TMPFILE,
+	    storepath, storename);
 
 	fd = open(tpath, O_CREAT | O_TRUNC | O_WRONLY, 0700);
 	if (fd == -1)
@@ -593,7 +605,7 @@ cyon_store_map(void)
 	u_char			hash[SHA_DIGEST_LENGTH];
 	u_char			ohash[SHA_DIGEST_LENGTH];
 
-	snprintf(fpath, sizeof(fpath), "%s/%s", storepath, CYON_STORE_FILE);
+	snprintf(fpath, sizeof(fpath), CYON_STORE_FILE, storepath, storename);
 	if ((fd = open(fpath, O_RDONLY)) == -1) {
 		if (errno != ENOENT)
 			fatal("open(%s): %s", fpath, errno_s);
@@ -648,7 +660,7 @@ cyon_storelog_replay(struct store_header *header)
 	char			fpath[MAXPATHLEN];
 	u_char			hash[SHA_DIGEST_LENGTH];
 
-	snprintf(fpath, sizeof(fpath), "%s/%s", storepath, CYON_LOG_FILE);
+	snprintf(fpath, sizeof(fpath), CYON_LOG_FILE, storepath, storename);
 	if ((lfd = open(fpath, O_RDONLY)) == -1) {
 		if (errno == ENOENT)
 			return;

@@ -37,10 +37,11 @@ static struct {
 	char	*descr;
 } use_options[] = {
 	{ 'b',	"ip",		"Bind to the given IP address" },
+	{ 'd',	"storedir",	"Directory where all data is stored" },
 	{ 'f',	NULL,		"Runs cyon in foreground mode" },
 	{ 'n',	NULL,		"No data persistence" },
 	{ 'p',	"port",		"Use given port to listen for connections" },
-	{ 's',	"storedir",	"Directory where all data is stored" },
+	{ 's',	"storename",	"Name of the cyon store" },
 	{ 'w',	"interval",	"Time in minutes in between store writes" },
 	{ 0,	NULL,		NULL },
 };
@@ -72,10 +73,13 @@ main(int argc, char *argv[])
 	storepath = NULL;
 	ip = "127.0.0.1";
 
-	while ((ch = getopt(argc, argv, "b:fi:np:s:w:")) != -1) {
+	while ((ch = getopt(argc, argv, "b:d:fi:np:s:w:")) != -1) {
 		switch (ch) {
 		case 'b':
 			ip = optarg;
+			break;
+		case 'd':
+			storepath = optarg;
 			break;
 		case 'f':
 			foreground = 1;
@@ -96,7 +100,7 @@ main(int argc, char *argv[])
 				fatal("Invalid port: %s", optarg);
 			break;
 		case 's':
-			storepath = optarg;
+			storename = optarg;
 			break;
 		case 'w':
 			store_write_int = cyon_strtonum(optarg, 0, 254, &err);
@@ -114,8 +118,9 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (storepath == NULL) {
-		fprintf(stderr, "No storedir set\n");
+	if (storepath == NULL || storename == NULL) {
+		fprintf(stderr,
+		    "Please set storepath (-d) and storename (-s)\n");
 		usage();
 	}
 
