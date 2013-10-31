@@ -134,7 +134,7 @@ cyon_store_init(void)
 	}
 
 	if (!store_nowrite)
-		cyon_storelog_init();
+		cyon_storelog_reopen(0);
 }
 
 int
@@ -403,20 +403,30 @@ cyon_storelog_flush(void)
 }
 
 void
-cyon_storelog_init(void)
+cyon_storelog_reopen(int wrlog)
 {
 	struct stat	st;
-	char		fpath[MAXPATHLEN];
+	char		fpath[MAXPATHLEN], *fmt;
 
 	if (lfd != -1) {
 		cyon_storelog_flush();
 		close(lfd);
 	}
 
-	snprintf(fpath, sizeof(fpath), CYON_LOG_FILE, storepath, storename);
+	if (wrlog)
+		fmt = CYON_WRITELOG_FILE;
+	else
+		fmt = CYON_LOG_FILE;
+
+	snprintf(fpath, sizeof(fpath), fmt, storepath, storename);
+	if (wrlog) {
+		if (stat(fpath, &st) != -1)
+			fatal("log open cancelled, log '%s' exists", fpath);
+	}
+
 	lfd = open(fpath, O_CREAT | O_APPEND | O_WRONLY, 0700);
 	if (lfd == -1)
-		fatal("could not open logfile: %s", errno_s);
+		fatal("could not open logfile %s: %s", fpath, errno_s);
 	if (fstat(lfd, &st) == -1)
 		fatal("fstat(lfd): %s", errno_s);
 
@@ -436,6 +446,8 @@ cyon_store_write(void)
 
 	if (rnode == NULL)
 		return (CYON_RESULT_OK);
+
+	cyon_storelog_reopen(1);
 
 	pid = fork();
 	if (pid == -1) {
@@ -499,6 +511,13 @@ cyon_store_write(void)
 
 	if (rename(tpath, fpath) == -1)
 		fatal("cannot move store into place: %s", errno_s);
+
+	snprintf(fpath, sizeof(fpath), CYON_LOG_FILE, storepath, storename);
+	snprintf(tpath, sizeof(tpath), CYON_WRITELOG_FILE,
+	    storepath, storename);
+
+	if (rename(tpath, fpath) == -1)
+		fatal("cannot move tmp log into place: %s", errno_s);
 
 	exit(0);
 }

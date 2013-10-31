@@ -162,7 +162,7 @@ extern u_int8_t			server_started;
 u_int64_t	cyon_time_ms(void);
 u_int64_t	cyon_time_us(void);
 void		cyon_log_init(void);
-void		cyon_storelog_init(void);
+void		cyon_storelog_reopen(int);
 void		cyon_storelog_flush(void);
 void		cyon_storewrite_start(void);
 void		cyon_log(int, const char *, ...);
