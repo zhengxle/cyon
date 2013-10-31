@@ -38,11 +38,6 @@
 #define CYON_NO_CHECKSUM		0
 #define CYON_ADD_CHECKSUM		1
 
-#define CYON_LOG_FILE			"%s/%s.log"
-#define CYON_WRITELOG_FILE		"%s/%s.write.log"
-#define CYON_STORE_FILE			"%s/%s.store"
-#define CYON_STORE_TMPFILE		"%s/%s.store.tmp"
-
 #define CYON_RESOLVE_NOTHING		0
 #define CYON_RESOLVE_LINK		1
 
@@ -73,14 +68,14 @@ struct store_log {
 } __attribute__((__packed__));
 
 static void		cyon_store_map(void);
+static void		cyon_traverse_node(struct node *);
+static void		cyon_store_mapnode(int, struct node *);
 static void		cyon_storelog_replay(struct store_header *);
 static void		cyon_atomic_read(int, void *, u_int32_t, int);
 static void		cyon_atomic_write(int, void *, u_int32_t, int);
-static void		cyon_store_mapnode(int, struct node *);
 static struct node	*cyon_node_lookup(u_int8_t *, u_int32_t, u_int8_t);
-static void		cyon_traverse_node(struct node *);
-static void		cyon_store_writenode(int, struct node *,
-			    u_int8_t *, u_int32_t, u_int32_t *);
+static void		cyon_store_writenode(int, struct node *, u_int8_t *,
+			    u_int32_t, u_int32_t *);
 
 u_int64_t		key_count;
 char			*storepath;
@@ -691,8 +686,8 @@ cyon_storelog_replay(struct store_header *header)
 		fatal("fstat(): %s", errno_s);
 
 	if (header->offset > (u_int64_t)st.st_size) {
-		fatal("logfile corruption? off: %ld > size: %ld",
-		    header->offset, st.st_size);
+		fatal("logfile %s corrupted? off: %ld > size: %ld",
+		    fpath, header->offset, st.st_size);
 	}
 
 	if (header->offset == (u_int64_t)st.st_size) {
@@ -700,8 +695,8 @@ cyon_storelog_replay(struct store_header *header)
 		return;
 	}
 
-	cyon_log(LOG_NOTICE, "applying logfile to store from offset %ld",
-	    header->offset);
+	cyon_log(LOG_NOTICE,
+	    "applying logfile to store from offset %ld", header->offset);
 
 	if (lseek(lfd, header->offset, SEEK_SET) == -1)
 		fatal("lseek() on logfile failed: %s", errno_s);

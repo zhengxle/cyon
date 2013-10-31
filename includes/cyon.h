@@ -95,6 +95,11 @@ void		fatal(const char *, ...);
 #define NETBUF_FORCE_REMOVE		0x02
 #define NETBUF_USE_DATA_DIRECT		0x04
 
+#define CYON_LOG_FILE			"%s/%s.log"
+#define CYON_WRITELOG_FILE		"%s/%s.write.log"
+#define CYON_STORE_FILE			"%s/%s.store"
+#define CYON_STORE_TMPFILE		"%s/%s.store.tmp"
+
 struct netbuf {
 	u_int8_t		*buf;
 	u_int32_t		s_off;

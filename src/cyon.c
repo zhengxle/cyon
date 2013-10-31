@@ -16,6 +16,7 @@
 
 #include <sys/param.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 
@@ -61,11 +62,13 @@ static u_int32_t	store_write_int = CYON_STORE_WRITE_INTERVAL;
 int
 main(int argc, char *argv[])
 {
+	struct stat	st;
 	char		*ip;
 	u_int64_t	now;
 	u_int16_t	port;
 	int		ch, err;
 	u_int8_t	foreground;
+	char		fpath[MAXPATHLEN];
 	u_int64_t	last_storelog_flush, idle_check;
 
 	port = 3331;
@@ -122,6 +125,13 @@ main(int argc, char *argv[])
 		fprintf(stderr,
 		    "Please set storepath (-d) and storename (-s)\n");
 		usage();
+	}
+
+	snprintf(fpath, sizeof(fpath), CYON_WRITELOG_FILE,
+	    storepath, storename);
+	if (stat(fpath, &st) != -1) {
+		printf("cyon-server: %s is in the way\n", fpath);
+		fatal("please append it to the current log");
 	}
 
 	cyon_log_init();
