@@ -28,8 +28,8 @@
 
 static void		usage(void);
 static void		cyon_signal(int);
-static void		cyon_ssl_init(void);
 static void		cyon_storewrite_wait(int);
+static void		cyon_ssl_init(char *, char *);
 static void		cyon_server_bind(struct listener *, char *, u_int16_t);
 
 static struct {
@@ -127,6 +127,9 @@ main(int argc, char *argv[])
 		usage();
 	}
 
+	if (argc != 2)
+		usage();
+
 	snprintf(fpath, sizeof(fpath), CYON_WRITELOG_FILE,
 	    storepath, storename);
 	if (stat(fpath, &st) != -1) {
@@ -136,7 +139,7 @@ main(int argc, char *argv[])
 
 	cyon_log_init();
 	cyon_mem_init();
-	cyon_ssl_init();
+	cyon_ssl_init(argv[0], argv[1]);
 	cyon_connection_init();
 	cyon_server_bind(&server, ip, port);
 	cyon_platform_event_init();
@@ -211,7 +214,7 @@ cyon_storewrite_start(void)
 }
 
 static void
-cyon_ssl_init(void)
+cyon_ssl_init(char *cert, char *key)
 {
 	SSL_library_init();
 	SSL_load_error_strings();
@@ -220,11 +223,10 @@ cyon_ssl_init(void)
 	if (ssl_ctx == NULL)
 		fatal("cyon_ssl_init(): SSL_CTX_new(): %s", ssl_errno_s);
 
-	if (!SSL_CTX_use_certificate_chain_file(ssl_ctx, "cert/server.crt"))
+	if (!SSL_CTX_use_certificate_chain_file(ssl_ctx, cert))
 		fatal("SSL_CTX_use_certificate_chain_file(): %s", ssl_errno_s);
 
-	if (!SSL_CTX_use_PrivateKey_file(ssl_ctx,
-	    "cert/server.key", SSL_FILETYPE_PEM))
+	if (!SSL_CTX_use_PrivateKey_file(ssl_ctx, key, SSL_FILETYPE_PEM))
 		fatal("SSL_CTX_use_PrivateKey_file(): %s", ssl_errno_s);
 
 	if (!SSL_CTX_check_private_key(ssl_ctx))
@@ -312,6 +314,7 @@ usage(void)
 {
 	u_int8_t	i;
 
+	printf("Usage: cyon-server [options] [certfile] [keyfile]\n");
 	printf("Available options for cyon:\n");
 	for (i = 0; use_options[i].descr != NULL; i++) {
 		printf("   -%c %s\t\t%s\n", use_options[i].opt,
