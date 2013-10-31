@@ -145,6 +145,11 @@ cyon_connection_handle(struct connection *c)
 		if (c->flags & CONN_READ_POSSIBLE) {
 			if (!net_recv_flush(c))
 				return (CYON_RESULT_ERROR);
+
+			if (TAILQ_EMPTY(&(c->recv_queue))) {
+				net_recv_queue(c, sizeof(struct cyon_op), 0,
+				    NULL, cyon_connection_recv_op);
+			}
 		}
 
 		if (c->flags & CONN_WRITE_POSSIBLE) {
@@ -178,7 +183,7 @@ cyon_connection_remove(struct connection *c)
 	for (nb = TAILQ_FIRST(&(c->send_queue)); nb != NULL; nb = next) {
 		next = TAILQ_NEXT(nb, list);
 		TAILQ_REMOVE(&(c->send_queue), nb, list);
-		if (nb->buf != NULL && !(nb->flags & NETBUF_USE_DATA_DIRECT))
+		if (nb->buf != NULL)
 			cyon_mem_free(nb->buf);
 		cyon_mem_free(nb);
 	}
@@ -335,12 +340,6 @@ cyon_connection_recv_op(struct netbuf *nb)
 		break;
 	}
 
-	if (r == CYON_RESULT_OK)
-		net_send_flush(c);
-
-	net_recv_queue(c, sizeof(struct cyon_op), 0,
-	    NULL, cyon_connection_recv_op);
-
 	return (r);
 }
 
@@ -376,8 +375,10 @@ cyon_connection_recv_put(struct netbuf *nb)
 
 	ret.length = 0;
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
+	net_recv_queue(c, sizeof(struct cyon_op), 0,
+	    NULL, cyon_connection_recv_op);
 
-	return (CYON_RESULT_OK);
+	return (net_send_flush(c));
 }
 
 static int
@@ -409,7 +410,7 @@ cyon_connection_recv_get(struct netbuf *nb)
 		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
 	}
 
-	return (CYON_RESULT_OK);
+	return (net_send_flush(c));
 }
 
 static int
@@ -441,7 +442,7 @@ cyon_connection_recv_getkeys(struct netbuf *nb)
 		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
 	}
 
-	return (CYON_RESULT_OK);
+	return (net_send_flush(c));
 }
 
 static int
@@ -468,7 +469,7 @@ cyon_connection_recv_del(struct netbuf *nb)
 
 	net_write32((u_int8_t *)&(ret.length), 0);
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
-	return (CYON_RESULT_OK);
+	return (net_send_flush(c));
 }
 
 static int
@@ -497,8 +498,7 @@ cyon_connection_recv_replace(struct netbuf *nb)
 
 	ret.length = 0;
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
-
-	return (CYON_RESULT_OK);
+	return (net_send_flush(c));
 }
 
 static int
@@ -549,7 +549,7 @@ cyon_connection_recv_auth(struct netbuf *nb)
 		cyon_connection_disconnect(c);
 	}
 
-	return (CYON_RESULT_OK);
+	return (net_send_flush(c));
 }
 
 static int
@@ -582,7 +582,7 @@ cyon_connection_recv_setauth(struct netbuf *nb)
 	cyon_storelog_write(CYON_OP_SETAUTH,
 	    store_passphrase, SHA256_DIGEST_LENGTH, NULL, 0, 0);
 
-	return (CYON_RESULT_OK);
+	return (net_send_flush(c));
 }
 
 static void
@@ -596,6 +596,7 @@ cyon_connection_recv_write(struct connection *c)
 	cyon_storewrite_start();
 	ret.op = CYON_OP_RESULT_OK;
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
+	net_send_flush(c);
 }
 
 static void
@@ -612,4 +613,5 @@ cyon_connection_recv_stats(struct connection *c)
 
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
 	net_send_queue(c, (u_int8_t *)&stats, sizeof(stats));
+	net_send_flush(c);
 }
