@@ -1,6 +1,5 @@
-Cyon is an in-memory key/value cluster with disk persistence.
-Under development, clustering does not work yet.
+Cyon is an in-memory key/value store with disk persistence.
 
-Stand-alone nodes work just fine.
+Under development, but works fine.
 
 joris@coders.se for bugs, patches, insults.
