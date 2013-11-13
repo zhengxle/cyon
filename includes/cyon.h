@@ -69,8 +69,6 @@ void		fatal(const char *, ...);
 /* Server stuff only. */
 #if defined(CYON_SERVER)
 
-#define DEBUG		1
-
 #if defined(DEBUG)
 #define cyon_debug(fmt, ...)		\
 	cyon_debug_internal(__FILE__, __LINE__, fmt, ##__VA_ARGS__)
@@ -271,8 +269,10 @@ int		net_recv(struct connection *);
 int		net_send_flush(struct connection *);
 int		net_recv_flush(struct connection *);
 
+void		cyon_store_lock(int);
 void		cyon_store_init(void);
 pid_t		cyon_store_write(void);
+void		cyon_store_unlock(void);
 int		cyon_store_del(u_int8_t *, u_int32_t);
 int		cyon_store_put(u_int8_t *, u_int32_t, u_int8_t *,
 		    u_int32_t, u_int32_t);

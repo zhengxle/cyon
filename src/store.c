@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 #include <unistd.h>
 
 #include "cyon.h"
@@ -86,6 +87,7 @@ u_char			*store_passphrase;
 static int		lfd;
 static struct node	*rnode;
 static SHA_CTX		shactx;
+static pthread_rwlock_t	store_lock;
 static u_int64_t	store_log_offset;
 static u_int8_t		replaying_log = 0;
 static u_int8_t		log_modified = 0;
@@ -117,6 +119,7 @@ cyon_store_init(void)
 	traverse_key = cyon_malloc(traverse_key_len);
 	memset(traverse_key, '\0', traverse_key_len);
 
+	pthread_rwlock_init(&store_lock, NULL);
 	cyon_store_map();
 
 	if (rnode == NULL) {
@@ -130,6 +133,43 @@ cyon_store_init(void)
 
 	if (!store_nowrite)
 		cyon_storelog_reopen(0);
+}
+
+void
+cyon_store_lock(int write)
+{
+	int		r, err;
+	int		(*lock)(pthread_rwlock_t *);
+
+	if (write)
+		lock = pthread_rwlock_wrlock;
+	else
+		lock = pthread_rwlock_rdlock;
+
+	err = 0;
+	for (;;) {
+		if ((r = lock(&store_lock)) == 0)
+			break;
+
+		cyon_log(LOG_NOTICE,
+		    "cyon_store_lock(%d) err nr#%d: %d", write, err++, r);
+
+		if (err == 5)
+			fatal("cyon_store_lock(%d) completely failed", write);
+	}
+
+	cyon_log(LOG_INFO, "grabbed %s store lock", (write) ? "write" : "read");
+}
+
+void
+cyon_store_unlock(void)
+{
+	int		r;
+
+	if ((r = pthread_rwlock_unlock(&store_lock)))
+		fatal("cyon_store_unlock(): failed with %d", r);
+
+	cyon_log(LOG_INFO, "released store lock");
 }
 
 int
@@ -951,10 +991,14 @@ cyon_traverse_node(struct node *rp)
 
 		klen = sizeof(u_int16_t) + traverse_key_off;
 		if ((traverse_buf_off + klen) >= traverse_buf_len) {
+			traverse_buf_len = traverse_buf_len * 2;
+			traverse_buf = cyon_realloc(traverse_buf,
+			    traverse_buf_len);
+			traverse_count = (u_int32_t *)traverse_buf;
+
 			cyon_log(LOG_NOTICE,
-			    "traverse output exhausted (%d keys)",
+			    "traverse output exhausted, extending (%d keys)",
 			    *traverse_count);
-			return;
 		}
 
 		*traverse_count = *traverse_count + 1;

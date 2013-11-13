@@ -531,6 +531,7 @@ cyon_cli_getkeys(u_int8_t argc, char **argv)
 
 	i = 0;
 	count = net_read32(out);
+#if 0
 	p = out + sizeof(u_int32_t);
 	while (i < count && p < (out + len)) {
 		klen = net_read16(p);
@@ -548,6 +549,7 @@ cyon_cli_getkeys(u_int8_t argc, char **argv)
 		p += klen;
 		i++;
 	}
+#endif
 
 	printf("got %d bytes - received %d keys\n", len, count);
 	free(out);

@@ -28,9 +28,13 @@
 
 #include "cyon.h"
 
+static unsigned long	thread_ssl_id(void);
+static void		thread_ssl_lock(int, int, const char *, int);
+
 pthread_key_t			thread;
 static u_int16_t		t_offset;
 static struct thread		*threads;
+static pthread_mutex_t		*ssl_mutexes;
 
 void
 cyon_threads_init(void)
@@ -42,13 +46,17 @@ cyon_threads_init(void)
 	if ((r = pthread_key_create(&thread, NULL)))
 		fatal("pthread_key_create() failed %d");
 
-	threads = cyon_malloc(thread_count * sizeof(struct thread));
+	ssl_mutexes = cyon_malloc(CRYPTO_num_locks() * sizeof(pthread_mutex_t));
+	for (i = 0; i < CRYPTO_num_locks(); i++)
+		pthread_mutex_init(&ssl_mutexes[i], NULL);
 
-	t = threads;
+	CRYPTO_set_id_callback(thread_ssl_id);
+	CRYPTO_set_locking_callback(thread_ssl_lock);
+
+	t = threads = cyon_malloc(thread_count * sizeof(struct thread));
 	for (i = 0; i < thread_count; i++) {
 		t->id = i;
-		t->quit = 0;
-		t++;
+		t++->quit = 0;
 	}
 
 	t_offset = 0;
@@ -132,4 +140,19 @@ cyon_thread_entry(void *arg)
 
 	cyon_connection_disconnect_all(t);
 	pthread_exit(NULL);
+}
+
+static void
+thread_ssl_lock(int mode, int n, const char *file, int line)
+{
+	if (mode & CRYPTO_LOCK)
+		pthread_mutex_lock(&ssl_mutexes[n]);
+	else
+		pthread_mutex_unlock(&ssl_mutexes[n]);
+}
+
+static unsigned long
+thread_ssl_id(void)
+{
+	return ((unsigned long)pthread_self());
 }

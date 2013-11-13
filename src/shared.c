@@ -63,6 +63,7 @@ fatal(const char *fmt, ...)
 	va_end(args);
 
 #if defined(CYON_SERVER)
+	/* XXX - if we're a thread, signal parent instead to be reaped */
 	cyon_log(LOG_ALERT, "fatal: %s", buf);
 	if (!server_started)
 		printf("cyon-server: %s\n", buf);

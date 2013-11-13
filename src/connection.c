@@ -37,12 +37,14 @@ static int		cyon_connection_recv_getkeys(struct netbuf *);
 static void		cyon_connection_recv_stats(struct connection *);
 static void		cyon_connection_recv_write(struct connection *);
 
+static pthread_mutex_t			dc_lock;
 static TAILQ_HEAD(, connection)		disconnected;
 
 void
 cyon_connection_init(void)
 {
 	TAILQ_INIT(&disconnected);
+	pthread_mutex_init(&dc_lock, NULL);
 }
 
 int
@@ -100,9 +102,9 @@ cyon_connection_disconnect(struct connection *c)
 
 		TAILQ_REMOVE(&(t->nctx.clients), c, list);
 
-		/* XXX grab a lock here */
+		pthread_mutex_lock(&dc_lock);
 		TAILQ_INSERT_TAIL(&disconnected, c, list);
-		/* XXX unlock here */
+		pthread_mutex_unlock(&dc_lock);
 	}
 }
 
@@ -256,9 +258,9 @@ cyon_connection_disconnect_all(struct thread *t)
 		next = TAILQ_NEXT(c, list);
 		TAILQ_REMOVE(&(t->nctx.clients), c, list);
 
-		/* XXX lock here */
+		pthread_mutex_lock(&dc_lock);
 		TAILQ_INSERT_TAIL(&disconnected, c, list);
-		/* XXX unlock here */
+		pthread_mutex_unlock(&dc_lock);
 	}
 }
 
@@ -386,10 +388,14 @@ cyon_connection_recv_put(struct netbuf *nb)
 	else
 		flags = 0;
 
+	cyon_store_lock(1);
+
 	if (cyon_store_put(key, klen, data, dlen, flags))
 		ret.op = CYON_OP_RESULT_OK;
 	else
 		ret.op = CYON_OP_RESULT_ERROR;
+
+	cyon_store_unlock();
 
 	ret.length = 0;
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
@@ -413,6 +419,8 @@ cyon_connection_recv_get(struct netbuf *nb)
 		return (CYON_RESULT_ERROR);
 	}
 
+	cyon_store_lock(0);
+
 	if (cyon_store_get(key, klen, &data, &dlen)) {
 		ret.op = CYON_OP_RESULT_OK;
 		net_write32((u_int8_t *)&(ret.length), dlen);
@@ -424,6 +432,8 @@ cyon_connection_recv_get(struct netbuf *nb)
 		net_write32((u_int8_t *)&(ret.length), 0);
 		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
 	}
+
+	cyon_store_unlock();
 
 	return (net_send_flush(c));
 }
@@ -443,6 +453,9 @@ cyon_connection_recv_getkeys(struct netbuf *nb)
 	if (klen == 0)
 		return (CYON_RESULT_ERROR);
 
+	/* XXX - lock as write, as it uses some globals */
+	cyon_store_lock(1);
+
 	if (cyon_store_getkeys(key, klen, &out, &olen)) {
 		ret.op = CYON_OP_RESULT_OK;
 		net_write32((u_int8_t *)&(ret.length), olen);
@@ -456,6 +469,8 @@ cyon_connection_recv_getkeys(struct netbuf *nb)
 		net_write32((u_int8_t *)&(ret.length), 0);
 		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
 	}
+
+	cyon_store_unlock();
 
 	return (net_send_flush(c));
 }
@@ -477,10 +492,14 @@ cyon_connection_recv_del(struct netbuf *nb)
 		return (CYON_RESULT_ERROR);
 	}
 
+	cyon_store_lock(1);
+
 	if (cyon_store_del(key, klen))
 		ret.op = CYON_OP_RESULT_OK;
 	else
 		ret.op = CYON_OP_RESULT_ERROR;
+
+	cyon_store_unlock();
 
 	net_write32((u_int8_t *)&(ret.length), 0);
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
@@ -506,10 +525,14 @@ cyon_connection_recv_replace(struct netbuf *nb)
 	key = nb->buf + sizeof(struct cyon_op) + (sizeof(u_int32_t) * 2);
 	data = key + klen;
 
+	cyon_store_lock(1);
+
 	if (cyon_store_replace(key, klen, data, dlen))
 		ret.op = CYON_OP_RESULT_OK;
 	else
 		ret.op = CYON_OP_RESULT_ERROR;
+
+	cyon_store_unlock();
 
 	ret.length = 0;
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
@@ -545,6 +568,8 @@ cyon_connection_recv_auth(struct netbuf *nb)
 		SHA256_Final(hash, &sha256ctx);
 	}
 
+	cyon_store_lock(0);
+
 	if ((store_passphrase != NULL &&
 	    !memcmp(store_passphrase, hash, SHA256_DIGEST_LENGTH)) ||
 	    (store_passphrase == NULL && klen == 0)) {
@@ -557,6 +582,8 @@ cyon_connection_recv_auth(struct netbuf *nb)
 		cyon_log(LOG_NOTICE, "failed authentication from %s",
 		    inet_ntoa(c->sin.sin_addr));
 	}
+
+	cyon_store_unlock();
 
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
 	if (ret.op != CYON_OP_RESULT_OK) {
@@ -585,10 +612,14 @@ cyon_connection_recv_setauth(struct netbuf *nb)
 		return (CYON_RESULT_ERROR);
 	}
 
+	cyon_store_lock(1);
+
 	if (store_passphrase != NULL)
 		cyon_mem_free(store_passphrase);
 	store_passphrase = cyon_malloc(SHA256_DIGEST_LENGTH);
 	memcpy(store_passphrase, hash, SHA256_DIGEST_LENGTH);
+
+	cyon_store_unlock();
 
 	ret.op = CYON_OP_RESULT_OK;
 	net_write32((u_int8_t *)&(ret.length), 0);
@@ -608,8 +639,10 @@ cyon_connection_recv_write(struct connection *c)
 	last_store_write = cyon_time_ms();
 	net_write32((u_int8_t *)&(ret.length), 0);
 
-	cyon_storewrite_start();
-	ret.op = CYON_OP_RESULT_OK;
+	/* XXX - signal parent to start one instead. */
+	//cyon_storewrite_start();
+
+	ret.op = CYON_OP_RESULT_ERROR;
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
 	net_send_flush(c);
 }
@@ -623,8 +656,10 @@ cyon_connection_recv_stats(struct connection *c)
 	ret.op = CYON_OP_RESULT_OK;
 	net_write32((u_int8_t *)&(ret.length), sizeof(struct cyon_stats));
 
+	cyon_store_lock(0);
 	stats.keycount = htobe64(key_count);
 	stats.meminuse = htobe64(meminuse);
+	cyon_store_unlock();
 
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
 	net_send_queue(c, (u_int8_t *)&stats, sizeof(stats));
