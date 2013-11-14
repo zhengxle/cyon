@@ -18,14 +18,11 @@
 
 #include "cyon.h"
 
-struct pool		nb_pool;
-struct pool		op_pool;
-
 void
-net_init(void)
+net_init(struct netcontext *nctx)
 {
-	pool_init(&nb_pool, "nb_pool", sizeof(struct netbuf), 1000);
-	pool_init(&op_pool, "op_pool", sizeof(struct cyon_op), 1000);
+	pool_init(&(nctx->nb_pool), "nb_pool", sizeof(struct netbuf), 1000);
+	pool_init(&(nctx->op_pool), "op_pool", sizeof(struct cyon_op), 1000);
 }
 
 void
@@ -33,6 +30,7 @@ net_send_queue(struct connection *c, u_int8_t *data, u_int32_t len)
 {
 	struct netbuf		*nb;
 	u_int32_t		avail;
+	struct netcontext	*nctx = (struct netcontext *)c->nctx;
 
 	nb = TAILQ_LAST(&(c->send_queue), netbuf_head);
 	if (nb != NULL && nb->b_len < nb->m_len) {
@@ -52,7 +50,7 @@ net_send_queue(struct connection *c, u_int8_t *data, u_int32_t len)
 		}
 	}
 
-	nb = pool_get(&nb_pool);
+	nb = pool_get(&(nctx->nb_pool));
 	nb->flags = 0;
 	nb->cb = NULL;
 	nb->owner = c;
@@ -77,8 +75,9 @@ net_recv_queue(struct connection *c, size_t len, int flags,
     struct netbuf **out, int (*cb)(struct netbuf *))
 {
 	struct netbuf		*nb;
+	struct netcontext	*nctx = (struct netcontext *)c->nctx;
 
-	nb = pool_get(&nb_pool);
+	nb = pool_get(&(nctx->nb_pool));
 	nb->cb = cb;
 	nb->b_len = len;
 	nb->m_len = len;
@@ -88,7 +87,7 @@ net_recv_queue(struct connection *c, size_t len, int flags,
 	nb->type = NETBUF_RECV;
 
 	if (flags & NETBUF_USE_OPPOOL)
-		nb->buf = pool_get(&op_pool);
+		nb->buf = pool_get(&(nctx->op_pool));
 	else
 		nb->buf = cyon_malloc(nb->b_len);
 
@@ -101,7 +100,8 @@ int
 net_recv_expand(struct connection *c, struct netbuf *nb, size_t len,
     int (*cb)(struct netbuf *))
 {
-	u_int8_t	*p;
+	u_int8_t		*p;
+	struct netcontext	*nctx = (struct netcontext *)c->nctx;
 
 	if (nb->type != NETBUF_RECV) {
 		cyon_debug("net_recv_expand(): wrong netbuf type");
@@ -115,7 +115,7 @@ net_recv_expand(struct connection *c, struct netbuf *nb, size_t len,
 	if (nb->flags & NETBUF_USE_OPPOOL) {
 		p = cyon_malloc(nb->b_len);
 		memcpy(p, nb->buf, nb->s_off);
-		pool_put(&op_pool, nb->buf);
+		pool_put(&(nctx->op_pool), nb->buf);
 		nb->buf = p;
 		nb->flags &= ~NETBUF_USE_OPPOOL;
 	} else {
@@ -134,6 +134,7 @@ net_send(struct connection *c)
 	int			r;
 	struct netbuf		*nb;
 	u_int32_t		len;
+	struct netcontext	*nctx = (struct netcontext *)c->nctx;
 
 	while (!TAILQ_EMPTY(&(c->send_queue))) {
 		nb = TAILQ_FIRST(&(c->send_queue));
@@ -166,7 +167,7 @@ net_send(struct connection *c)
 			TAILQ_REMOVE(&(c->send_queue), nb, list);
 
 			cyon_mem_free(nb->buf);
-			pool_put(&nb_pool, nb);
+			pool_put(&(nctx->nb_pool), nb);
 		}
 	}
 
@@ -192,6 +193,7 @@ net_recv(struct connection *c)
 {
 	int			r;
 	struct netbuf		*nb;
+	struct netcontext	*nctx = (struct netcontext *)c->nctx;
 
 	while (!TAILQ_EMPTY(&(c->recv_queue))) {
 		nb = TAILQ_FIRST(&(c->recv_queue));
@@ -227,10 +229,10 @@ again:
 				TAILQ_REMOVE(&(c->recv_queue), nb, list);
 
 				if (nb->flags & NETBUF_USE_OPPOOL)
-					pool_put(&op_pool, nb->buf);
+					pool_put(&(nctx->op_pool), nb->buf);
 				else
 					cyon_mem_free(nb->buf);
-				pool_put(&nb_pool, nb);
+				pool_put(&(nctx->nb_pool), nb);
 			}
 
 			if (r != CYON_RESULT_OK)

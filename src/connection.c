@@ -21,6 +21,7 @@
 
 #include <endian.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <unistd.h>
 
 #include "cyon.h"
@@ -37,25 +38,22 @@ static void		cyon_connection_recv_stats(struct connection *);
 static void		cyon_connection_recv_write(struct connection *);
 
 static TAILQ_HEAD(, connection)		disconnected;
-static TAILQ_HEAD(, connection)		clients;
 
 void
 cyon_connection_init(void)
 {
-	net_init();
-	TAILQ_INIT(&clients);
 	TAILQ_INIT(&disconnected);
 }
 
 int
-cyon_connection_accept(struct listener *l, struct connection **out)
+cyon_connection_accept(struct listener *l)
 {
-	socklen_t		len;
+	struct thread		*t;
 	struct connection	*c;
+	socklen_t		len;
 
 	cyon_debug("cyon_connection_accept(%p)", l);
 
-	*out = NULL;
 	len = sizeof(struct sockaddr_in);
 	c = (struct connection *)cyon_malloc(sizeof(*c));
 	if ((c->fd = accept(l->fd, (struct sockaddr *)&(c->sin), &len)) == -1) {
@@ -70,31 +68,41 @@ cyon_connection_accept(struct listener *l, struct connection **out)
 		return (CYON_RESULT_ERROR);
 	}
 
-	c->owner = l;
+	t = cyon_thread_getnext();
+
 	c->ssl = NULL;
 	c->flags = 0;
+	c->owner = t;
+	c->nctx = &(t->nctx);
 	c->idle_timer.start = 0;
 	c->state = CONN_STATE_SSL_SHAKE;
 	c->idle_timer.length = idle_timeout;
 
 	TAILQ_INIT(&(c->send_queue));
 	TAILQ_INIT(&(c->recv_queue));
-	TAILQ_INSERT_TAIL(&clients, c, list);
-	cyon_connection_start_idletimer(c);
+	TAILQ_INSERT_TAIL(&(t->nctx.clients), c, list);
 
-	*out = c;
+	cyon_connection_start_idletimer(c);
+	cyon_platform_event_schedule(&(t->nctx), c->fd,
+	    EPOLLIN | EPOLLOUT | EPOLLET, 0, c);
+
 	return (CYON_RESULT_OK);
 }
 
 void
 cyon_connection_disconnect(struct connection *c)
 {
+	struct thread	*t = (struct thread *)c->owner;
+
 	if (c->state != CONN_STATE_DISCONNECTING) {
 		cyon_debug("preparing %p for disconnection", c);
 		c->state = CONN_STATE_DISCONNECTING;
 
-		TAILQ_REMOVE(&clients, c, list);
+		TAILQ_REMOVE(&(t->nctx.clients), c, list);
+
+		/* XXX grab a lock here */
 		TAILQ_INSERT_TAIL(&disconnected, c, list);
+		/* XXX unlock here */
 	}
 }
 
@@ -169,6 +177,7 @@ void
 cyon_connection_remove(struct connection *c)
 {
 	struct netbuf		*nb, *next;
+	struct netcontext	*nctx = (struct netcontext *)c->nctx;
 
 	cyon_debug("cyon_connection_remove(%p)", c);
 
@@ -176,22 +185,27 @@ cyon_connection_remove(struct connection *c)
 		SSL_free(c->ssl);
 	close(c->fd);
 
+	/*
+	 * XXX - we are calling pool_put() with pools that belong
+	 * to a thread. We either lock this OR we make threads reap
+	 * their own connections.
+	 */
 	for (nb = TAILQ_FIRST(&(c->send_queue)); nb != NULL; nb = next) {
 		next = TAILQ_NEXT(nb, list);
 		TAILQ_REMOVE(&(c->send_queue), nb, list);
 		if (nb->buf != NULL)
 			cyon_mem_free(nb->buf);
-		pool_put(&nb_pool, nb);
+		pool_put(&(nctx->nb_pool), nb);
 	}
 
 	for (nb = TAILQ_FIRST(&(c->recv_queue)); nb != NULL; nb = next) {
 		next = TAILQ_NEXT(nb, list);
 		TAILQ_REMOVE(&(c->recv_queue), nb, list);
 		if (nb->flags & NETBUF_USE_OPPOOL)
-			pool_put(&op_pool, nb->buf);
+			pool_put(&(nctx->op_pool), nb->buf);
 		else
 			cyon_mem_free(nb->buf);
-		pool_put(&nb_pool, nb);
+		pool_put(&(nctx->nb_pool), nb);
 	}
 
 	cyon_mem_free(c);
@@ -202,8 +216,9 @@ cyon_connection_check_idletimer(u_int64_t now)
 {
 	u_int64_t		d;
 	struct connection	*c;
+	struct thread		*t = THREAD_VAR(thread);
 
-	TAILQ_FOREACH(c, &clients, list) {
+	TAILQ_FOREACH(c, &(t->nctx.clients), list) {
 		d = now - c->idle_timer.start;
 		if (d >= c->idle_timer.length) {
 			cyon_debug("%p idle for %d ms, expiring", c, d);
@@ -233,17 +248,18 @@ cyon_connection_stop_idletimer(struct connection *c)
 }
 
 void
-cyon_connection_disconnect_all(void)
+cyon_connection_disconnect_all(struct thread *t)
 {
 	struct connection	*c, *next;
 
-	for (c = TAILQ_FIRST(&clients); c != NULL; c = next) {
+	for (c = TAILQ_FIRST(&(t->nctx.clients)); c != NULL; c = next) {
 		next = TAILQ_NEXT(c, list);
-		TAILQ_REMOVE(&clients, c, list);
-		TAILQ_INSERT_TAIL(&disconnected, c, list);
-	}
+		TAILQ_REMOVE(&(t->nctx.clients), c, list);
 
-	cyon_connection_prune();
+		/* XXX lock here */
+		TAILQ_INSERT_TAIL(&disconnected, c, list);
+		/* XXX unlock here */
+	}
 }
 
 void

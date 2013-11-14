@@ -18,6 +18,7 @@
 #include <sys/time.h>
 
 #include <stdarg.h>
+#include <pthread.h>
 #include <unistd.h>
 
 #include "cyon.h"
@@ -25,14 +26,18 @@
 void
 cyon_debug_internal(char *file, int line, const char *fmt, ...)
 {
-	va_list		args;
-	char		buf[2048];
+	va_list			args;
+	char			buf[2048];
+	struct thread		*t = THREAD_VAR(thread);
 
 	va_start(args, fmt);
 	vsnprintf(buf, sizeof(buf), fmt, args);
 	va_end(args);
 
-	printf("%s:%d - %s\n", file, line, buf);
+	if (t == NULL)
+		printf("[parent] %s:%d - %s\n", file, line, buf);
+	else
+		printf("[thread:%d] %s:%d - %s\n", t->id, file, line, buf);
 }
 
 void
@@ -59,14 +64,18 @@ cyon_log_init(void)
 void
 cyon_log(int prio, const char *fmt, ...)
 {
-	va_list		args;
-	char		buf[1024];
+	va_list			args;
+	char			buf[1024];
+	struct thread		*t = THREAD_VAR(thread);
 
 	va_start(args, fmt);
 	vsnprintf(buf, sizeof(buf), fmt, args);
 	va_end(args);
 
-	syslog(prio, "%s", buf);
+	if (t == NULL)
+		syslog(prio, "[parent] %s", buf);
+	else
+		syslog(prio, "[thread:%d] %s", t->id, buf);
 }
 
 long long

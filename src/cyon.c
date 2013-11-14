@@ -49,9 +49,11 @@ static struct {
 
 volatile sig_atomic_t	sig_recv;
 
+struct netcontext	nctx;
 struct listener		server;
 extern const char	*__progname;
 SSL_CTX			*ssl_ctx = NULL;
+u_int16_t		thread_count = 1;
 u_int64_t		last_store_write;
 u_int8_t		server_started = 0;
 u_int32_t		idle_timeout = CYON_IDLE_TIMER_MAX;
@@ -69,14 +71,14 @@ main(int argc, char *argv[])
 	int		ch, err;
 	u_int8_t	foreground;
 	char		fpath[MAXPATHLEN];
-	u_int64_t	last_storelog_flush, idle_check;
+	u_int64_t	last_storelog_flush;
 
 	port = 3331;
 	foreground = 0;
 	storepath = NULL;
 	ip = "127.0.0.1";
 
-	while ((ch = getopt(argc, argv, "b:d:fi:np:s:w:")) != -1) {
+	while ((ch = getopt(argc, argv, "b:d:fi:np:s:t:w:")) != -1) {
 		switch (ch) {
 		case 'b':
 			ip = optarg;
@@ -104,6 +106,11 @@ main(int argc, char *argv[])
 			break;
 		case 's':
 			storename = optarg;
+			break;
+		case 't':
+			thread_count = cyon_strtonum(optarg, 1, 65535, &err);
+			if (err != CYON_RESULT_OK)
+				fatal("Invalid number of threads: %s", optarg);
 			break;
 		case 'w':
 			store_write_int = cyon_strtonum(optarg, 0, 254, &err);
@@ -139,10 +146,10 @@ main(int argc, char *argv[])
 
 	cyon_log_init();
 	cyon_mem_init();
+	cyon_threads_init();
 	cyon_ssl_init(argv[0], argv[1]);
 	cyon_connection_init();
 	cyon_server_bind(&server, ip, port);
-	cyon_platform_event_init();
 
 	if (foreground == 0)
 		printf("cyon daemonizing, check system log for details\n");
@@ -158,13 +165,22 @@ main(int argc, char *argv[])
 	signal(SIGHUP, cyon_signal);
 	signal(SIGPIPE, SIG_IGN);
 
+	cyon_threads_start();
+
 	server_started = 1;
-	idle_check = last_store_write = cyon_time_ms();
-	cyon_log(LOG_NOTICE, "server ready on %s:%d", ip, port);
+	last_store_write = cyon_time_ms();
+	cyon_log(LOG_NOTICE, "server ready on %s:%d running %d threads",
+	    ip, port, thread_count);
+
+	cyon_platform_event_init(&nctx);
+	cyon_platform_event_schedule(&nctx, server.fd, EPOLLIN, 0, &server);
 
 	for (;;) {
 		if (sig_recv == SIGQUIT)
 			break;
+
+		cyon_platform_event_wait(&nctx);
+		cyon_connection_prune();
 
 		now = cyon_time_ms();
 		if (writepid == -1 && store_write_int != 0 &&
@@ -179,22 +195,15 @@ main(int argc, char *argv[])
 		}
 
 		cyon_storewrite_wait(0);
-		cyon_platform_event_wait();
-
-		if (idle_timeout > 0 && (now - idle_check) >= 10000) {
-			idle_check = now;
-			cyon_connection_check_idletimer(now);
-		}
-
-		cyon_connection_prune();
 	}
 
 	if (writepid != -1)
 		cyon_storewrite_wait(1);
 
+	cyon_threads_stop();
+
 	cyon_storewrite_start();
 	cyon_storewrite_wait(1);
-	cyon_connection_disconnect_all();
 
 	cyon_log(LOG_NOTICE, "server stopped");
 

@@ -21,28 +21,24 @@
 
 #include "cyon.h"
 
-static int			efd = -1;
-static u_int32_t		event_count = 0;
-static struct epoll_event	*events = NULL;
+#define EVENT_COUNT	50
 
 void
-cyon_platform_event_init(void)
+cyon_platform_event_init(struct netcontext *nctx)
 {
-	if ((efd = epoll_create(10000)) == -1)
+	if ((nctx->efd = epoll_create(10000)) == -1)
 		fatal("epoll_create(): %s", errno_s);
 
-	event_count = 50;
-	events = cyon_calloc(event_count, sizeof(struct epoll_event));
-	cyon_platform_event_schedule(server.fd, EPOLLIN, 0, &server);
+	nctx->events = cyon_calloc(EVENT_COUNT, sizeof(struct epoll_event));
 }
 
 void
-cyon_platform_event_wait(void)
+cyon_platform_event_wait(struct netcontext *nctx)
 {
 	struct connection	*c;
 	int			n, i, *fd;
 
-	n = epoll_wait(efd, events, event_count, 100);
+	n = epoll_wait(nctx->efd, nctx->events, EVENT_COUNT, 100);
 	if (n == -1) {
 		if (errno == EINTR)
 			return;
@@ -50,30 +46,28 @@ cyon_platform_event_wait(void)
 	}
 
 	if (n > 0)
-		cyon_debug("main(): %d sockets available", n);
+		cyon_debug("%d sockets available", n);
 
 	for (i = 0; i < n; i++) {
-		fd = (int *)events[i].data.ptr;
+		fd = (int *)nctx->events[i].data.ptr;
 
-		if (events[i].events & EPOLLERR ||
-		    events[i].events & EPOLLHUP) {
+		if (nctx->events[i].events & EPOLLERR ||
+		    nctx->events[i].events & EPOLLHUP) {
 			if (*fd == server.fd)
 				fatal("error on server socket");
 
-			c = (struct connection *)events[i].data.ptr;
+			c = (struct connection *)nctx->events[i].data.ptr;
 			cyon_connection_disconnect(c);
 			continue;
 		}
 
 		if (*fd == server.fd) {
-			cyon_connection_accept(&server, &c);
-			cyon_platform_event_schedule(c->fd,
-			    EPOLLIN | EPOLLOUT | EPOLLET, 0, c);
+			cyon_connection_accept(&server);
 		} else {
-			c = (struct connection *)events[i].data.ptr;
-			if (events[i].events & EPOLLIN)
+			c = (struct connection *)nctx->events[i].data.ptr;
+			if (nctx->events[i].events & EPOLLIN)
 				c->flags |= CONN_READ_POSSIBLE;
-			if (events[i].events & EPOLLOUT)
+			if (nctx->events[i].events & EPOLLOUT)
 				c->flags |= CONN_WRITE_POSSIBLE;
 
 			if (!cyon_connection_handle(c))
@@ -83,15 +77,16 @@ cyon_platform_event_wait(void)
 }
 
 void
-cyon_platform_event_schedule(int fd, int type, int flags, void *udata)
+cyon_platform_event_schedule(struct netcontext *nctx, int fd, int type,
+    int flags, void *udata)
 {
 	struct epoll_event	evt;
 
 	evt.events = type;
 	evt.data.ptr = udata;
-	if (epoll_ctl(efd, EPOLL_CTL_ADD, fd, &evt) == -1) {
+	if (epoll_ctl(nctx->efd, EPOLL_CTL_ADD, fd, &evt) == -1) {
 		if (errno == EEXIST) {
-			if (epoll_ctl(efd, EPOLL_CTL_MOD, fd, &evt) == -1)
+			if (epoll_ctl(nctx->efd, EPOLL_CTL_MOD, fd, &evt) == -1)
 				fatal("epoll_ctl() MOD: %s", errno_s);
 		} else {
 			fatal("epoll_ctl() ADD: %s", errno_s);

@@ -19,6 +19,7 @@
 
 #include <sys/types.h>
 #include <sys/queue.h>
+#include <sys/epoll.h>
 
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -27,6 +28,7 @@
 #include <openssl/ssl.h>
 
 #include <errno.h>
+#include <signal.h>
 #include <syslog.h>
 
 /* Shared server & cli stuff. */
@@ -67,6 +69,8 @@ void		fatal(const char *, ...);
 /* Server stuff only. */
 #if defined(CYON_SERVER)
 
+#define DEBUG		1
+
 #if defined(DEBUG)
 #define cyon_debug(fmt, ...)		\
 	cyon_debug_internal(__FILE__, __LINE__, fmt, ##__VA_ARGS__)
@@ -99,6 +103,8 @@ void		fatal(const char *, ...);
 #define CYON_WRITELOG_FILE		"%s/%s.write.log"
 #define CYON_STORE_FILE			"%s/%s.store"
 #define CYON_STORE_TMPFILE		"%s/%s.store.tmp"
+
+#define THREAD_VAR(x)			pthread_getspecific(x)
 
 struct netbuf {
 	u_int8_t		*buf;
@@ -160,9 +166,10 @@ struct connection {
 	int			fd;
 	u_int8_t		state;
 	struct sockaddr_in	sin;
-	void			*owner;
 	SSL			*ssl;
 	u_int8_t		flags;
+	void			*owner;
+	void			*nctx;
 
 	struct {
 		u_int64_t	length;
@@ -175,7 +182,26 @@ struct connection {
 	TAILQ_ENTRY(connection)	list;
 };
 
+TAILQ_HEAD(connection_list, connection);
+
+struct netcontext {
+	u_int8_t			flags;
+	int				efd;
+	struct epoll_event		*events;
+	struct pool			nb_pool;
+	struct pool			op_pool;
+	struct connection_list		clients;
+};
+
+struct thread {
+	u_int16_t			id;
+	pthread_t			tid;
+	u_int8_t			quit;
+	struct netcontext		nctx;
+};
+
 extern struct listener		server;
+extern pthread_key_t		thread;
 extern struct pool		nb_pool;
 extern struct pool		op_pool;
 extern SSL_CTX			*ssl_ctx;
@@ -184,6 +210,7 @@ extern u_int64_t		key_count;
 extern char			*storepath;
 extern char			*storename;
 extern u_int32_t		idle_timeout;
+extern u_int16_t		thread_count;
 extern u_int64_t		last_store_write;
 extern u_char			*store_passphrase;
 extern u_int8_t			store_nowrite;
@@ -212,21 +239,27 @@ void		cyon_mem_init(void);
 void		cyon_connection_init(void);
 void		cyon_connection_prune(void);
 int		cyon_connection_nonblock(int);
-void		cyon_connection_disconnect_all(void);
+int		cyon_connection_accept(struct listener *);
 int		cyon_connection_handle(struct connection *);
 void		cyon_connection_remove(struct connection *);
 void		cyon_connection_disconnect(struct connection *);
+void		cyon_connection_disconnect_all(struct thread *);
 void		cyon_connection_start_idletimer(struct connection *);
 void		cyon_connection_stop_idletimer(struct connection *);
 void		cyon_connection_check_idletimer(u_int64_t);
-int		cyon_connection_accept(struct listener *,
-		    struct connection **);
 
-void		cyon_platform_event_init(void);
-void		cyon_platform_event_wait(void);
-void		cyon_platform_event_schedule(int, int, int, void *);
+void		cyon_threads_init(void);
+void		cyon_threads_start(void);
+void		cyon_threads_stop(void);
+void		*cyon_thread_entry(void *);
+struct thread	*cyon_thread_getnext(void);
 
-void		net_init(void);
+void		cyon_platform_event_init(struct netcontext *);
+void		cyon_platform_event_wait(struct netcontext *);
+void		cyon_platform_event_schedule(struct netcontext *,
+		    int, int, int, void *);
+
+void		net_init(struct netcontext *);
 void		net_send_queue(struct connection *, u_int8_t *, u_int32_t);
 void		net_recv_queue(struct connection *, size_t, int,
 		    struct netbuf **, int (*cb)(struct netbuf *));
