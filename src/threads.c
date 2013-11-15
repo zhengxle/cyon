@@ -87,8 +87,6 @@ cyon_thread_getnext(void)
 	p = (u_int8_t *)threads + t_offset++ * sizeof(struct thread);
 	t = (struct thread *)p;
 
-	cyon_debug("returning thread %d\n", t->id);
-
 	return (t);
 }
 

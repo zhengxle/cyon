@@ -157,8 +157,6 @@ cyon_store_lock(int write)
 		if (err == 5)
 			fatal("cyon_store_lock(%d) completely failed", write);
 	}
-
-	cyon_log(LOG_INFO, "grabbed %s store lock", (write) ? "write" : "read");
 }
 
 void
@@ -168,8 +166,6 @@ cyon_store_unlock(void)
 
 	if ((r = pthread_rwlock_unlock(&store_lock)))
 		fatal("cyon_store_unlock(): failed with %d", r);
-
-	cyon_log(LOG_INFO, "released store lock");
 }
 
 int

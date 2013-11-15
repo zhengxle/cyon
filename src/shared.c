@@ -14,6 +14,10 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <sys/types.h>
+
+#include <pthread.h>
+
 #include "cyon.h"
 
 u_int16_t
@@ -55,15 +59,18 @@ net_write32(u_int8_t *p, u_int32_t n)
 void
 fatal(const char *fmt, ...)
 {
-	va_list		args;
-	char		buf[2048];
+	va_list			args;
+	char			buf[2048];
 
 	va_start(args, fmt);
 	vsnprintf(buf, sizeof(buf), fmt, args);
 	va_end(args);
 
 #if defined(CYON_SERVER)
-	/* XXX - if we're a thread, signal parent instead to be reaped */
+	/*
+	 * Ifs we fatals we fatals, bring down entire server even
+	 * if the fatal was caused by a thread.
+	 */
 	cyon_log(LOG_ALERT, "fatal: %s", buf);
 	if (!server_started)
 		printf("cyon-server: %s\n", buf);

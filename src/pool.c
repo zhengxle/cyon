@@ -14,7 +14,10 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <sys/types.h>
 #include <sys/queue.h>
+
+#include <pthread.h>
 
 #include "cyon.h"
 
@@ -36,13 +39,18 @@ pool_init(struct pool *pool, char *name, u_int32_t len, u_int32_t elm)
 	LIST_INIT(&(pool->freelist));
 
 	pool_region_create(pool, elm);
+	pthread_mutex_init(&(pool->lock), NULL);
 }
 
 void *
 pool_get(struct pool *pool)
 {
+	int				r;
 	u_int8_t			*ptr;
 	struct pool_entry		*entry;
+
+	if ((r = pthread_mutex_lock(&(pool->lock))))
+		fatal("pool_get(): mutex_lock returned %d", r);
 
 	if (LIST_EMPTY(&(pool->freelist))) {
 		cyon_log(LOG_NOTICE, "pool %s is exhausted (%d/%d)",
@@ -56,10 +64,11 @@ pool_get(struct pool *pool)
 		fatal("%s: element %p was not free", pool->name, entry);
 	LIST_REMOVE(entry, list);
 
-	entry->state = POOL_ELEMENT_BUSY;
-	ptr = (u_int8_t *)entry + sizeof(struct pool_entry);
-
 	pool->inuse++;
+	entry->state = POOL_ELEMENT_BUSY;
+	pthread_mutex_unlock(&(pool->lock));
+
+	ptr = (u_int8_t *)entry + sizeof(struct pool_entry);
 
 	return (ptr);
 }
@@ -67,6 +76,7 @@ pool_get(struct pool *pool)
 void
 pool_put(struct pool *pool, void *ptr)
 {
+	int				r;
 	struct pool_entry		*entry;
 
 	entry = (struct pool_entry *)
@@ -76,9 +86,14 @@ pool_put(struct pool *pool, void *ptr)
 		fatal("%s: element %p was not busy", pool->name, ptr);
 
 	entry->state = POOL_ELEMENT_FREE;
-	LIST_INSERT_HEAD(&(pool->freelist), entry, list);
 
+	if ((r = pthread_mutex_lock(&(pool->lock))))
+		fatal("pool_put(): mutex_lock returned %d", r);
+
+	LIST_INSERT_HEAD(&(pool->freelist), entry, list);
 	pool->inuse--;
+
+	pthread_mutex_unlock(&(pool->lock));
 }
 
 static void

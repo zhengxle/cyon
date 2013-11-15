@@ -187,11 +187,6 @@ cyon_connection_remove(struct connection *c)
 		SSL_free(c->ssl);
 	close(c->fd);
 
-	/*
-	 * XXX - we are calling pool_put() with pools that belong
-	 * to a thread. We either lock this OR we make threads reap
-	 * their own connections.
-	 */
 	for (nb = TAILQ_FIRST(&(c->send_queue)); nb != NULL; nb = next) {
 		next = TAILQ_NEXT(nb, list);
 		TAILQ_REMOVE(&(c->send_queue), nb, list);
@@ -453,7 +448,7 @@ cyon_connection_recv_getkeys(struct netbuf *nb)
 	if (klen == 0)
 		return (CYON_RESULT_ERROR);
 
-	/* XXX - lock as write, as it uses some globals */
+	/* Lock as write, as it uses some globals */
 	cyon_store_lock(1);
 
 	if (cyon_store_getkeys(key, klen, &out, &olen)) {

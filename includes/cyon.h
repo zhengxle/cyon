@@ -139,6 +139,7 @@ struct pool {
 	u_int32_t		elms;
 	u_int32_t		inuse;
 	char			*name;
+	pthread_mutex_t		lock;
 
 	LIST_HEAD(, pool_region)	regions;
 	LIST_HEAD(, pool_entry)		freelist;
