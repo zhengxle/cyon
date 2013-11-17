@@ -22,6 +22,7 @@
 
 #include <fcntl.h>
 #include <signal.h>
+#include <pthread.h>
 #include <unistd.h>
 
 #include "cyon.h"
@@ -54,8 +55,10 @@ struct listener		server;
 extern const char	*__progname;
 SSL_CTX			*ssl_ctx = NULL;
 u_int16_t		thread_count = 1;
+pthread_mutex_t		store_write_lock;
 u_int64_t		last_store_write;
 u_int8_t		server_started = 0;
+u_int8_t		signaled_store_write;
 u_int32_t		idle_timeout = CYON_IDLE_TIMER_MAX;
 
 static pid_t		writepid = -1;
@@ -71,7 +74,7 @@ main(int argc, char *argv[])
 	int		ch, err;
 	u_int8_t	foreground;
 	char		fpath[MAXPATHLEN];
-	u_int64_t	last_storelog_flush;
+	u_int64_t	last_storelog_flush, last_signaled_write_check;
 
 	port = 3331;
 	foreground = 0;
@@ -158,6 +161,8 @@ main(int argc, char *argv[])
 		fatal("could not forkify(): %s", errno_s);
 
 	cyon_store_init();
+	signaled_store_write = 0;
+	pthread_mutex_init(&store_write_lock, NULL);
 
 	sig_recv = 0;
 	signal(SIGQUIT, cyon_signal);
@@ -168,7 +173,7 @@ main(int argc, char *argv[])
 	cyon_threads_start();
 
 	server_started = 1;
-	last_store_write = cyon_time_ms();
+	last_signaled_write_check = last_store_write = cyon_time_ms();
 	cyon_log(LOG_NOTICE, "server ready on %s:%d running %d threads",
 	    ip, port, thread_count);
 
@@ -183,6 +188,20 @@ main(int argc, char *argv[])
 		cyon_connection_prune();
 
 		now = cyon_time_ms();
+		if ((now - last_signaled_write_check) >= 1000) {
+			last_signaled_write_check = now;
+
+			if (pthread_mutex_lock(&store_write_lock))
+				fatal("failed to lock on store write lock");
+
+			if (signaled_store_write) {
+				signaled_store_write = 0;
+				cyon_storewrite_start();
+			}
+
+			pthread_mutex_unlock(&store_write_lock);
+		}
+
 		if (writepid == -1 && store_write_int != 0 &&
 		    (now - last_store_write) >= store_write_int) {
 			last_store_write = now;

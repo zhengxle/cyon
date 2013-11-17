@@ -634,10 +634,13 @@ cyon_connection_recv_write(struct connection *c)
 	last_store_write = cyon_time_ms();
 	net_write32((u_int8_t *)&(ret.length), 0);
 
-	/* XXX - signal parent to start one instead. */
-	//cyon_storewrite_start();
+	if (pthread_mutex_lock(&store_write_lock))
+		fatal("failed to grab store write lock");
 
-	ret.op = CYON_OP_RESULT_ERROR;
+	signaled_store_write = 1;
+	pthread_mutex_unlock(&store_write_lock);
+
+	ret.op = CYON_OP_RESULT_OK;
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
 	net_send_flush(c);
 }

@@ -34,6 +34,7 @@
 void		usage(void);
 void		cyon_connect(void);
 void		cyon_ssl_init(void);
+
 void		cyon_disconnect(void);
 void		fatal(const char *, ...);
 void		cyon_ssl_write(void *, u_int32_t);
@@ -513,8 +514,8 @@ cyon_cli_getkeys(u_int8_t argc, char **argv)
 	u_int8_t	*out, *p;
 	u_int32_t	len, count, i;
 
-	if (argc != 2) {
-		printf("getkeys [key]\n");
+	if (argc < 2) {
+		printf("getkeys [key] [show]\n");
 		return;
 	}
 
@@ -531,28 +532,28 @@ cyon_cli_getkeys(u_int8_t argc, char **argv)
 
 	i = 0;
 	count = net_read32(out);
-#if 0
-	p = out + sizeof(u_int32_t);
-	while (i < count && p < (out + len)) {
-		klen = net_read16(p);
-		p += sizeof(u_int16_t);
+	if (argc == 3) {
+		p = out + sizeof(u_int32_t);
+		while (i < count && p < (out + len)) {
+			klen = net_read16(p);
+			p += sizeof(u_int16_t);
 
-		if ((key = malloc(klen + 1)) == NULL)
-			fatal("malloc(): %s", errno_s);
+			if ((key = malloc(klen + 1)) == NULL)
+				fatal("malloc(): %s", errno_s);
 
-		memset(key, '\0', klen + 1);
-		memcpy(key, p, klen);
-		printf("%s\n", key);
+			memset(key, '\0', klen + 1);
+			memcpy(key, p, klen);
+			printf("%s\n", key);
 
-		free(key);
+			free(key);
 
-		p += klen;
-		i++;
+			p += klen;
+			i++;
+		}
 	}
-#endif
 
-	printf("got %d bytes - received %d keys\n", len, count);
 	free(out);
+	printf("got %d bytes - received %d keys\n", len, count);
 }
 
 void
