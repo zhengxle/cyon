@@ -69,12 +69,13 @@ struct store_log {
 } __attribute__((__packed__));
 
 static void		cyon_store_map(void);
-static void		cyon_traverse_node(struct node *);
 static void		cyon_store_mapnode(int, struct node *);
 static void		cyon_storelog_replay(struct store_header *);
 static void		cyon_atomic_read(int, void *, u_int32_t, int);
 static void		cyon_atomic_write(int, void *, u_int32_t, int);
 static struct node	*cyon_node_lookup(u_int8_t *, u_int32_t, u_int8_t);
+static void		cyon_traverse_node(struct connection *,
+			    struct node *, u_int32_t *);
 static void		cyon_store_writenode(int, struct node *, u_int8_t *,
 			    u_int32_t, u_int32_t *);
 
@@ -92,11 +93,6 @@ static u_int64_t	store_log_offset;
 static u_int8_t		replaying_log = 0;
 static u_int8_t		log_modified = 0;
 
-static u_int32_t	*traverse_count;
-static u_int8_t		*traverse_buf = NULL;
-static u_int32_t	traverse_buf_len = 0;
-static u_int32_t	traverse_buf_off = 0;
-
 static u_int8_t		*traverse_key = NULL;
 static u_int32_t	traverse_key_len = 0;
 static u_int32_t	traverse_key_off = 0;
@@ -109,10 +105,6 @@ cyon_store_init(void)
 	key_count = 0;
 	store_log_offset = 0;
 	store_passphrase = NULL;
-
-	traverse_buf_off = 0;
-	traverse_buf_len = 16 * 1024 * 1024;
-	traverse_buf = cyon_malloc(traverse_buf_len);
 
 	traverse_key_off = 0;
 	traverse_key_len = 1024;
@@ -186,36 +178,25 @@ cyon_store_get(u_int8_t *key, u_int32_t len, u_int8_t **out, u_int32_t *olen)
 	return (CYON_RESULT_OK);
 }
 
-int
-cyon_store_getkeys(u_int8_t *root, u_int32_t rlen,
-    u_int8_t **out, u_int32_t *olen)
+void
+cyon_store_getkeys(struct connection *c, u_int8_t *root, u_int32_t rlen,
+    u_int32_t *bytes)
 {
 	struct node	*p;
 
-	*olen = 0;
-	*out = NULL;
+	*bytes = 0;
 
 	if ((p = cyon_node_lookup(root, rlen, CYON_RESOLVE_NOTHING)) == NULL)
-		return (CYON_RESULT_OK);
+		return;
 
 	if (p->region == NULL)
-		return (CYON_RESULT_OK);
+		return;
 
 	memset(traverse_key, '\0', traverse_key_len);
 	memcpy(traverse_key, root, rlen);
 	traverse_key_off = rlen;
 
-	traverse_count = (u_int32_t *)traverse_buf;
-	traverse_buf_off = sizeof(u_int32_t);
-	*traverse_count = 0;
-
-	cyon_traverse_node(p);
-
-	*out = traverse_buf;
-	*olen = traverse_buf_off;
-	net_write32((u_int8_t *)traverse_count, *traverse_count);
-
-	return (CYON_RESULT_OK);
+	cyon_traverse_node(c, p, bytes);
 }
 
 int
@@ -972,11 +953,12 @@ cyon_node_lookup(u_int8_t *key, u_int32_t len, u_int8_t resolve)
 }
 
 static void
-cyon_traverse_node(struct node *rp)
+cyon_traverse_node(struct connection *c, struct node *rp, u_int32_t *bytes)
 {
 	u_int8_t	i;
 	struct node	*p;
-	u_int32_t	rlen, len, klen;
+	u_int16_t	klen;
+	u_int32_t	rlen, len, nlen;
 
 	if (rp->region == NULL)
 		return;
@@ -985,25 +967,15 @@ cyon_traverse_node(struct node *rp)
 		len = *(u_int32_t *)rp->region;
 		rlen = sizeof(u_int32_t) + len;
 
-		klen = sizeof(u_int16_t) + traverse_key_off;
-		if ((traverse_buf_off + klen) >= traverse_buf_len) {
-			traverse_buf_len = traverse_buf_len * 2;
-			traverse_buf = cyon_realloc(traverse_buf,
-			    traverse_buf_len);
-			traverse_count = (u_int32_t *)traverse_buf;
+		net_write32((u_int8_t *)&nlen, len);
+		net_write16((u_int8_t *)&klen, traverse_key_off);
 
-			cyon_log(LOG_NOTICE,
-			    "traverse output exhausted, extending (%d keys)",
-			    *traverse_count);
-		}
+		net_send_queue(c, (u_int8_t *)&klen, sizeof(klen), 0);
+		net_send_queue(c, traverse_key, traverse_key_off, 0);
+		net_send_queue(c, (u_int8_t *)&nlen, sizeof(nlen), 0);
+		net_send_queue(c, rp->region + sizeof(u_int32_t), len, 0);
 
-		*traverse_count = *traverse_count + 1;
-
-		net_write16(traverse_buf + traverse_buf_off, traverse_key_off);
-		memcpy(traverse_buf + traverse_buf_off + sizeof(u_int16_t),
-		    traverse_key, traverse_key_off);
-
-		traverse_buf_off += klen;
+		*bytes += sizeof(klen) + traverse_key_off + sizeof(nlen) + len;
 	} else {
 		rlen = 0;
 	}
@@ -1025,7 +997,7 @@ cyon_traverse_node(struct node *rp)
 		}
 
 		traverse_key[traverse_key_off++] = i;
-		cyon_traverse_node(p);
+		cyon_traverse_node(c, p, bytes);
 		traverse_key[traverse_key_off--] = '\0';
 	}
 }

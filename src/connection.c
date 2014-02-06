@@ -393,7 +393,7 @@ cyon_connection_recv_put(struct netbuf *nb)
 	cyon_store_unlock();
 
 	ret.length = 0;
-	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);
 	return (net_send_flush(c));
 }
 
@@ -420,12 +420,12 @@ cyon_connection_recv_get(struct netbuf *nb)
 		ret.op = CYON_OP_RESULT_OK;
 		net_write32((u_int8_t *)&(ret.length), dlen);
 
-		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
-		net_send_queue(c, data, dlen);
+		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);
+		net_send_queue(c, data, dlen, 0);
 	} else {
 		ret.op = CYON_OP_RESULT_ERROR;
 		net_write32((u_int8_t *)&(ret.length), 0);
-		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
+		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);
 	}
 
 	cyon_store_unlock();
@@ -436,9 +436,11 @@ cyon_connection_recv_get(struct netbuf *nb)
 static int
 cyon_connection_recv_getkeys(struct netbuf *nb)
 {
+	u_int16_t		eok;
+	u_int8_t		*key;
+	struct netbuf		*nbl;
 	struct cyon_op		ret, *op;
-	u_int32_t		klen, olen;
-	u_int8_t		*key, *out;
+	u_int32_t		klen, bytes;
 	struct connection	*c = (struct connection *)nb->owner;
 
 	op = (struct cyon_op *)nb->buf;
@@ -448,24 +450,27 @@ cyon_connection_recv_getkeys(struct netbuf *nb)
 	if (klen == 0)
 		return (CYON_RESULT_ERROR);
 
-	/* Lock as write, as it uses some globals */
-	cyon_store_lock(1);
+	ret.op = CYON_OP_RESULT_OK;
+	net_write32((u_int8_t *)&(ret.length), 0);
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), NETBUF_NO_FRAGMENT);
 
-	if (cyon_store_getkeys(key, klen, &out, &olen)) {
-		ret.op = CYON_OP_RESULT_OK;
-		net_write32((u_int8_t *)&(ret.length), olen);
+	/*
+	 * Kind of a hack. Grab the queued packet so we can update
+	 * the number of bytes that will be returned to the client in it.
+	 */
+	nbl = TAILQ_LAST(&(c->send_queue), netbuf_head);
 
-		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
-
-		if (olen > 0)
-			net_send_queue(c, out, olen);
-	} else {
-		ret.op = CYON_OP_RESULT_ERROR;
-		net_write32((u_int8_t *)&(ret.length), 0);
-		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
-	}
-
+	cyon_store_lock(0);
+	cyon_store_getkeys(c, key, klen, &bytes);
 	cyon_store_unlock();
+
+	net_write16((u_int8_t *)&eok, 0);
+	net_send_queue(c, (u_int8_t *)&eok, sizeof(eok), 0);
+	bytes += sizeof(eok);
+
+	/* Update the total count now in the cyon_op response. */
+	op = (struct cyon_op *)nbl->buf;
+	net_write32((u_int8_t *)&(op->length), bytes);
 
 	return (net_send_flush(c));
 }
@@ -497,7 +502,7 @@ cyon_connection_recv_del(struct netbuf *nb)
 	cyon_store_unlock();
 
 	net_write32((u_int8_t *)&(ret.length), 0);
-	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);
 	return (net_send_flush(c));
 }
 
@@ -530,7 +535,7 @@ cyon_connection_recv_replace(struct netbuf *nb)
 	cyon_store_unlock();
 
 	ret.length = 0;
-	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);
 	return (net_send_flush(c));
 }
 
@@ -580,7 +585,7 @@ cyon_connection_recv_auth(struct netbuf *nb)
 
 	cyon_store_unlock();
 
-	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);
 	if (ret.op != CYON_OP_RESULT_OK) {
 		net_send_flush(c);
 		cyon_connection_disconnect(c);
@@ -619,7 +624,7 @@ cyon_connection_recv_setauth(struct netbuf *nb)
 	ret.op = CYON_OP_RESULT_OK;
 	net_write32((u_int8_t *)&(ret.length), 0);
 
-	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);
 	cyon_storelog_write(CYON_OP_SETAUTH,
 	    store_passphrase, SHA256_DIGEST_LENGTH, NULL, 0, 0);
 
@@ -641,7 +646,7 @@ cyon_connection_recv_write(struct connection *c)
 	pthread_mutex_unlock(&store_write_lock);
 
 	ret.op = CYON_OP_RESULT_OK;
-	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);
 	net_send_flush(c);
 }
 
@@ -659,7 +664,7 @@ cyon_connection_recv_stats(struct connection *c)
 	stats.meminuse = htobe64(meminuse);
 	cyon_store_unlock();
 
-	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret));
-	net_send_queue(c, (u_int8_t *)&stats, sizeof(stats));
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);
+	net_send_queue(c, (u_int8_t *)&stats, sizeof(stats), 0);
 	net_send_flush(c);
 }

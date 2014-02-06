@@ -26,14 +26,15 @@ net_init(struct netcontext *nctx)
 }
 
 void
-net_send_queue(struct connection *c, u_int8_t *data, u_int32_t len)
+net_send_queue(struct connection *c, u_int8_t *data, u_int32_t len, int flags)
 {
 	struct netbuf		*nb;
 	u_int32_t		avail;
 	struct netcontext	*nctx = (struct netcontext *)c->nctx;
 
 	nb = TAILQ_LAST(&(c->send_queue), netbuf_head);
-	if (nb != NULL && nb->b_len < nb->m_len) {
+	if (nb != NULL && nb->b_len < nb->m_len &&
+	    !(flags & NETBUF_NO_FRAGMENT)) {
 		avail = nb->m_len - nb->b_len;
 		if (len < avail) {
 			memcpy(nb->buf + nb->b_len, data, len);

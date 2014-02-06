@@ -93,8 +93,7 @@ void		fatal(const char *, ...);
 #define NETBUF_SEND			1
 #define NETBUF_SEND_PAYLOAD_MAX		4000
 
-#define NETBUF_CALL_CB_ALWAYS		0x01
-#define NETBUF_FORCE_REMOVE		0x02
+#define NETBUF_NO_FRAGMENT		0x01
 #define NETBUF_USE_OPPOOL		0x04
 
 #define CYON_LOG_FILE			"%s/%s.log"
@@ -261,7 +260,7 @@ void		cyon_platform_event_schedule(struct netcontext *,
 		    int, int, int, void *);
 
 void		net_init(struct netcontext *);
-void		net_send_queue(struct connection *, u_int8_t *, u_int32_t);
+void		net_send_queue(struct connection *, u_int8_t *, u_int32_t, int);
 void		net_recv_queue(struct connection *, size_t, int,
 		    struct netbuf **, int (*cb)(struct netbuf *));
 int		net_recv_expand(struct connection *, struct netbuf *,
@@ -280,8 +279,8 @@ int		cyon_store_del(u_int8_t *, u_int32_t);
 int		cyon_store_put(u_int8_t *, u_int32_t, u_int8_t *,
 		    u_int32_t, u_int32_t);
 int		cyon_store_get(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);
-int		cyon_store_getkeys(u_int8_t *, u_int32_t,
-		    u_int8_t **, u_int32_t *);
+void		cyon_store_getkeys(struct connection *, u_int8_t *,
+		    u_int32_t, u_int32_t *);
 int		cyon_store_replace(u_int8_t *, u_int32_t,
 		    u_int8_t *, u_int32_t);
 

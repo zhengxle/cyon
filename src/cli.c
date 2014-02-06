@@ -512,7 +512,7 @@ cyon_cli_getkeys(u_int8_t argc, char **argv)
 	char		*key;
 	u_int16_t	klen;
 	u_int8_t	*out, *p;
-	u_int32_t	len, count, i;
+	u_int32_t	len, i, dlen;
 
 	if (argc < 2) {
 		printf("getkeys [key] [show]\n");
@@ -531,29 +531,32 @@ cyon_cli_getkeys(u_int8_t argc, char **argv)
 	}
 
 	i = 0;
-	count = net_read32(out);
-	if (argc == 3) {
-		p = out + sizeof(u_int32_t);
-		while (i < count && p < (out + len)) {
-			klen = net_read16(p);
-			p += sizeof(u_int16_t);
+	p = out;
+	while (p < (out + len)) {
+		klen = net_read16(p);
+		if (klen == 0)
+			break;
 
-			if ((key = malloc(klen + 1)) == NULL)
-				fatal("malloc(): %s", errno_s);
+		p += sizeof(u_int16_t);
 
-			memset(key, '\0', klen + 1);
-			memcpy(key, p, klen);
-			printf("%s\n", key);
+		if (argc == 3)
+			key = (char *)p;
 
-			free(key);
+		p += klen;
+		dlen = net_read32(p);
+		p += sizeof(u_int32_t);
 
-			p += klen;
-			i++;
+		if (argc == 3) {
+			printf("%.*s", dlen, p);
+			printf("%.*s -> %d bytes\n", klen, key, dlen);
 		}
+
+		p += dlen;
+		i++;
 	}
 
 	free(out);
-	printf("got %d bytes - received %d keys\n", len, count);
+	printf("got %d bytes - received %d keys\n", len, i);
 }
 
 void
