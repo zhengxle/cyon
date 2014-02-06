@@ -81,6 +81,8 @@ void		fatal(const char *, ...);
 #define STORE_KEY_OFFSET(b)		((b + sizeof(struct cyon_op) + 8))
 #define STORE_DATA_OFFSET(b, s)		((STORE_KEY_OFFSET(b) + s))
 
+#define CYON_KEY_MAX			(USHRT_MAX - 1)
+
 #define CYON_STORE_WRITE_NOFORK		0
 #define CYON_STORE_WRITE_FORK		1
 #define CYON_STORE_WRITE_INTERVAL	60000
@@ -198,6 +200,13 @@ struct thread {
 	struct netcontext		nctx;
 };
 
+struct getkeys_ctx {
+	u_int8_t			*key;
+	u_int32_t			len;
+	u_int32_t			off;
+	u_int32_t			bytes;
+};
+
 extern struct listener		server;
 extern pthread_key_t		thread;
 extern struct pool		nb_pool;
@@ -279,8 +288,8 @@ int		cyon_store_del(u_int8_t *, u_int32_t);
 int		cyon_store_put(u_int8_t *, u_int32_t, u_int8_t *,
 		    u_int32_t, u_int32_t);
 int		cyon_store_get(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);
-void		cyon_store_getkeys(struct connection *, u_int8_t *,
-		    u_int32_t, u_int32_t *);
+void		cyon_store_getkeys(struct getkeys_ctx *, struct connection *,
+		    u_int8_t *, u_int32_t);
 int		cyon_store_replace(u_int8_t *, u_int32_t,
 		    u_int8_t *, u_int32_t);
 

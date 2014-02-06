@@ -74,8 +74,8 @@ static void		cyon_storelog_replay(struct store_header *);
 static void		cyon_atomic_read(int, void *, u_int32_t, int);
 static void		cyon_atomic_write(int, void *, u_int32_t, int);
 static struct node	*cyon_node_lookup(u_int8_t *, u_int32_t, u_int8_t);
-static void		cyon_traverse_node(struct connection *,
-			    struct node *, u_int32_t *);
+static void		cyon_traverse_node(struct getkeys_ctx *,
+			    struct connection *, struct node *);
 static void		cyon_store_writenode(int, struct node *, u_int8_t *,
 			    u_int32_t, u_int32_t *);
 
@@ -93,10 +93,6 @@ static u_int64_t	store_log_offset;
 static u_int8_t		replaying_log = 0;
 static u_int8_t		log_modified = 0;
 
-static u_int8_t		*traverse_key = NULL;
-static u_int32_t	traverse_key_len = 0;
-static u_int32_t	traverse_key_off = 0;
-
 void
 cyon_store_init(void)
 {
@@ -105,11 +101,6 @@ cyon_store_init(void)
 	key_count = 0;
 	store_log_offset = 0;
 	store_passphrase = NULL;
-
-	traverse_key_off = 0;
-	traverse_key_len = 1024;
-	traverse_key = cyon_malloc(traverse_key_len);
-	memset(traverse_key, '\0', traverse_key_len);
 
 	pthread_rwlock_init(&store_lock, NULL);
 	cyon_store_map();
@@ -179,12 +170,15 @@ cyon_store_get(u_int8_t *key, u_int32_t len, u_int8_t **out, u_int32_t *olen)
 }
 
 void
-cyon_store_getkeys(struct connection *c, u_int8_t *root, u_int32_t rlen,
-    u_int32_t *bytes)
+cyon_store_getkeys(struct getkeys_ctx *ctx, struct connection *c,
+    u_int8_t *root, u_int32_t rlen)
 {
 	struct node	*p;
 
-	*bytes = 0;
+	ctx->off = 0;
+	ctx->bytes = 0;
+	ctx->len = CYON_KEY_MAX;
+	ctx->key = cyon_malloc(ctx->len);
 
 	if ((p = cyon_node_lookup(root, rlen, CYON_RESOLVE_NOTHING)) == NULL)
 		return;
@@ -192,11 +186,11 @@ cyon_store_getkeys(struct connection *c, u_int8_t *root, u_int32_t rlen,
 	if (p->region == NULL)
 		return;
 
-	memset(traverse_key, '\0', traverse_key_len);
-	memcpy(traverse_key, root, rlen);
-	traverse_key_off = rlen;
+	memset(ctx->key, '\0', ctx->len);
+	memcpy(ctx->key, root, rlen);
+	ctx->off = rlen;
 
-	cyon_traverse_node(c, p, bytes);
+	cyon_traverse_node(ctx, c, p);
 }
 
 int
@@ -284,8 +278,12 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
 	u_int32_t		base, offset;
 	u_int8_t		i, idx, *old;
 
-	p = rnode;
+	if (len > CYON_KEY_MAX) {
+		cyon_log(LOG_NOTICE, "Attempt to put key > CYON_KEY_MAX");
+		return (CYON_RESULT_ERROR);
+	}
 
+	p = rnode;
 	for (i = 0; i < len; i++) {
 		idx = key[i];
 		if (p->region == NULL) {
@@ -915,6 +913,11 @@ cyon_node_lookup(u_int8_t *key, u_int32_t len, u_int8_t resolve)
 	u_int32_t	rlen;
 	struct node	*p, *l;
 
+	if (len > CYON_KEY_MAX) {
+		cyon_log(LOG_NOTICE, "Attempt to lookup key > CYON_KEY_MAX");
+		return (NULL);
+	}
+
 	p = rnode;
 	for (i = 0; i < len; i++) {
 		idx = key[i];
@@ -953,7 +956,8 @@ cyon_node_lookup(u_int8_t *key, u_int32_t len, u_int8_t resolve)
 }
 
 static void
-cyon_traverse_node(struct connection *c, struct node *rp, u_int32_t *bytes)
+cyon_traverse_node(struct getkeys_ctx *ctx, struct connection *c,
+    struct node *rp)
 {
 	u_int8_t	i;
 	struct node	*p;
@@ -968,14 +972,14 @@ cyon_traverse_node(struct connection *c, struct node *rp, u_int32_t *bytes)
 		rlen = sizeof(u_int32_t) + len;
 
 		net_write32((u_int8_t *)&nlen, len);
-		net_write16((u_int8_t *)&klen, traverse_key_off);
+		net_write16((u_int8_t *)&klen, ctx->off);
 
 		net_send_queue(c, (u_int8_t *)&klen, sizeof(klen), 0);
-		net_send_queue(c, traverse_key, traverse_key_off, 0);
+		net_send_queue(c, ctx->key, ctx->off, 0);
 		net_send_queue(c, (u_int8_t *)&nlen, sizeof(nlen), 0);
 		net_send_queue(c, rp->region + sizeof(u_int32_t), len, 0);
 
-		*bytes += sizeof(klen) + traverse_key_off + sizeof(nlen) + len;
+		ctx->bytes += sizeof(klen) + ctx->off + sizeof(nlen) + len;
 	} else {
 		rlen = 0;
 	}
@@ -987,17 +991,11 @@ cyon_traverse_node(struct connection *c, struct node *rp, u_int32_t *bytes)
 		p = (struct node *)((u_int8_t *)rp->region + rlen +
 		    ((i - rp->rbase) * sizeof(struct node)));
 
-		if (traverse_key_off >= traverse_key_len) {
-			traverse_key_len = traverse_key_len * 2;
-			traverse_key = cyon_realloc(traverse_key,
-			    traverse_key_len);
+		if (ctx->off >= ctx->len)
+			break;
 
-			memset(traverse_key + traverse_key_off,
-			    '\0', traverse_key_len - traverse_key_off);
-		}
-
-		traverse_key[traverse_key_off++] = i;
-		cyon_traverse_node(c, p, bytes);
-		traverse_key[traverse_key_off--] = '\0';
+		ctx->key[ctx->off++] = i;
+		cyon_traverse_node(ctx, c, p);
+		ctx->key[ctx->off--] = '\0';
 	}
 }

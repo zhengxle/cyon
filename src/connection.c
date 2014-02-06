@@ -436,11 +436,12 @@ cyon_connection_recv_get(struct netbuf *nb)
 static int
 cyon_connection_recv_getkeys(struct netbuf *nb)
 {
+	struct getkeys_ctx	ctx;
 	u_int16_t		eok;
+	u_int32_t		klen;
 	u_int8_t		*key;
 	struct netbuf		*nbl;
 	struct cyon_op		ret, *op;
-	u_int32_t		klen, bytes;
 	struct connection	*c = (struct connection *)nb->owner;
 
 	op = (struct cyon_op *)nb->buf;
@@ -461,16 +462,18 @@ cyon_connection_recv_getkeys(struct netbuf *nb)
 	nbl = TAILQ_LAST(&(c->send_queue), netbuf_head);
 
 	cyon_store_lock(0);
-	cyon_store_getkeys(c, key, klen, &bytes);
+	cyon_store_getkeys(&ctx, c, key, klen);
 	cyon_store_unlock();
+
+	cyon_mem_free(ctx.key);
 
 	net_write16((u_int8_t *)&eok, 0);
 	net_send_queue(c, (u_int8_t *)&eok, sizeof(eok), 0);
-	bytes += sizeof(eok);
+	ctx.bytes += sizeof(eok);
 
 	/* Update the total count now in the cyon_op response. */
 	op = (struct cyon_op *)nbl->buf;
-	net_write32((u_int8_t *)&(op->length), bytes);
+	net_write32((u_int8_t *)&(op->length), ctx.bytes);
 
 	return (net_send_flush(c));
 }
