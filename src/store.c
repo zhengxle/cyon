@@ -967,16 +967,29 @@ cyon_traverse_node(struct getkeys_ctx *ctx, struct connection *c,
     struct node *rp)
 {
 	u_int8_t	i;
-	struct node	*p;
 	u_int16_t	klen;
+	struct node	*p, *wp;
 	u_int32_t	rlen, len, nlen;
 
 	if (rp->region == NULL)
 		return;
 
 	if (rp->flags & NODE_FLAG_HASDATA) {
+		wp = rp;
 		len = *(u_int32_t *)rp->region;
 		rlen = sizeof(u_int32_t) + len;
+
+		if (rp->flags & NODE_FLAG_ISLINK) {
+			len = *(u_int32_t *)rp->region;
+			rlen = sizeof(u_int32_t) + len;
+
+			wp = cyon_node_lookup(rp->region + sizeof(u_int32_t),
+			    len, CYON_RESOLVE_LINK);
+			if (wp == NULL || !(wp->flags & NODE_FLAG_HASDATA))
+				wp = NULL;
+
+			len = *(u_int32_t *)wp->region;
+		}
 
 		net_write32((u_int8_t *)&nlen, len);
 		net_write16((u_int8_t *)&klen, ctx->off);
@@ -984,7 +997,7 @@ cyon_traverse_node(struct getkeys_ctx *ctx, struct connection *c,
 		net_send_queue(c, (u_int8_t *)&klen, sizeof(klen), 0);
 		net_send_queue(c, ctx->key, ctx->off, 0);
 		net_send_queue(c, (u_int8_t *)&nlen, sizeof(nlen), 0);
-		net_send_queue(c, rp->region + sizeof(u_int32_t), len, 0);
+		net_send_queue(c, wp->region + sizeof(u_int32_t), len, 0);
 
 		ctx->bytes += sizeof(klen) + ctx->off + sizeof(nlen) + len;
 	} else {
