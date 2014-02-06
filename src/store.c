@@ -403,7 +403,11 @@ cyon_storelog_flush(void)
 		return;
 
 	for (;;) {
-		ret = fsync(lfd);
+		if (storelog_use_datasync)
+			ret = fdatasync(lfd);
+		else
+			ret = fsync(lfd);
+
 		if (ret == -1 && errno == EINTR)
 			continue;
 		if (ret == -1)
@@ -571,6 +575,9 @@ cyon_storelog_write(u_int8_t op, u_int8_t *key, u_int32_t klen,
 	log_modified = 1;
 	cyon_mem_free(buf);
 	store_log_offset += sizeof(slog) + (len - (sizeof(u_int32_t) * 2));
+
+	if (storelog_always_sync)
+		cyon_storelog_flush();
 }
 
 static void

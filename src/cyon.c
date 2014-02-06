@@ -38,6 +38,7 @@ static struct {
 	char	*label;
 	char	*descr;
 } use_options[] = {
+	{ 'a',	NULL,		"Always sync to disk after a storelog_write" },
 	{ 'b',	"ip",		"Bind to the given IP address" },
 	{ 'd',	"storedir",	"Directory where all data is stored" },
 	{ 'f',	NULL,		"Runs cyon in foreground mode" },
@@ -45,6 +46,7 @@ static struct {
 	{ 'p',	"port",		"Use given port to listen for connections" },
 	{ 's',	"storename",	"Name of the cyon store" },
 	{ 'w',	"interval",	"Time in minutes in between store writes" },
+	{ 'z',	NULL,		"Use fdatasync instead of fsync" },
 	{ 0,	NULL,		NULL },
 };
 
@@ -59,6 +61,8 @@ pthread_mutex_t		store_write_lock;
 u_int64_t		last_store_write;
 u_int8_t		server_started = 0;
 u_int8_t		signaled_store_write;
+u_int8_t		storelog_always_sync = 0;
+u_int8_t		storelog_use_datasync = 0;
 u_int32_t		idle_timeout = CYON_IDLE_TIMER_MAX;
 
 static pid_t		writepid = -1;
@@ -81,8 +85,11 @@ main(int argc, char *argv[])
 	storepath = NULL;
 	ip = "127.0.0.1";
 
-	while ((ch = getopt(argc, argv, "b:d:fi:np:s:t:w:")) != -1) {
+	while ((ch = getopt(argc, argv, "ab:d:fi:np:s:t:w:z")) != -1) {
 		switch (ch) {
+		case 'a':
+			storelog_always_sync = 1;
+			break;
 		case 'b':
 			ip = optarg;
 			break;
@@ -120,6 +127,9 @@ main(int argc, char *argv[])
 			if (err != CYON_RESULT_OK)
 				fatal("Invalid write interval: %s", optarg);
 			store_write_int = (store_write_int * 60) * 1000;
+			break;
+		case 'z':
+			storelog_use_datasync = 1;
 			break;
 		case '?':
 		default:
@@ -208,7 +218,8 @@ main(int argc, char *argv[])
 			cyon_storewrite_start();
 		}
 
-		if ((now - last_storelog_flush) >= 1) {
+		if (storelog_always_sync == 0 &&
+		    ((now - last_storelog_flush) >= 1)) {
 			last_storelog_flush = now;
 			cyon_storelog_flush();
 		}

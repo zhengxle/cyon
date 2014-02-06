@@ -223,7 +223,9 @@ extern u_int64_t		last_store_write;
 extern u_char			*store_passphrase;
 extern u_int8_t			store_nowrite;
 extern u_int8_t			server_started;
+extern u_int8_t			storelog_always_sync;
 extern u_int8_t			signaled_store_write;
+extern u_int8_t			storelog_use_datasync;
 
 u_int64_t	cyon_time_ms(void);
 u_int64_t	cyon_time_us(void);
