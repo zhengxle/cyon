@@ -1,5 +1,18 @@
-Cyon is an in-memory key/value store with disk persistence.
+Cyon is a fast multithreaded key/value store.
 
-Under development, but works fine.
+You can chose to store data + index in memory or only store the index in memory.
+Has several data persistence options (fsync every 1 second, fsync every write).
 
+The default is data + index in memory with fsyncs every 1 second.
+
+Additionally, when data is stored in memory Cyon will write the operation
+to a log file before performing the operation on its in memory data structure.
+
+When Cyon writes its full data store to disk it is completely non blocking
+and it recycles the log file after the data store is verified.
+
+Cyon can also run as read-only slaves, or as non-persistent database where
+it will not commit anything to disk.
+
+Under heavy development, but works fine.
 joris@coders.se for bugs, patches, insults.
