@@ -113,6 +113,8 @@ static u_int8_t		store_modified = 0;
 void
 cyon_store_init(void)
 {
+	char	*hex;
+
 	lfd = -1;
 	dfd = -1;
 	rnode = NULL;
@@ -134,6 +136,12 @@ cyon_store_init(void)
 	} else {
 		cyon_log(LOG_NOTICE,
 		    "store loaded from disk with %ld keys", key_count);
+
+		if (store_retain_logs) {
+			cyon_sha_hex(store_state, &hex);
+			cyon_log(LOG_NOTICE, "loaded state is %s", hex);
+			cyon_mem_free(hex);
+		}
 	}
 
 	if (cyon_readonly_mode)
@@ -693,7 +701,7 @@ cyon_store_writenode(int fd, struct node *p, u_int8_t *buf, u_int32_t blen,
     u_int32_t *len)
 {
 	struct node		*np;
-	u_int32_t		offset, i, rlen;
+	u_int32_t		offset, i, rlen, tlen, slen;
 
 	if (p->flags & NODE_FLAG_HASDATA)
 		offset = sizeof(u_int32_t) + *(u_int32_t *)p->region;
@@ -701,37 +709,51 @@ cyon_store_writenode(int fd, struct node *p, u_int8_t *buf, u_int32_t blen,
 		offset = 0;
 
 	if (p->rbase == 0 && p->rtop == 0) {
-		rlen = offset;
+		tlen = offset;
 	} else {
-		rlen = offset +
+		tlen = offset +
 		    (((p->rtop - p->rbase) + 1) * sizeof(struct node));
 	}
 
 	if (p == rnode)
-		rlen += sizeof(struct node);
+		tlen += sizeof(struct node);
 
-	if ((*len + rlen) >= blen) {
+	if ((*len + tlen) >= blen) {
 		cyon_atomic_write(fd, buf, *len, CYON_ADD_CHECKSUM);
 		*len = 0;
 	}
 
 	if (p == rnode) {
-		rlen -= sizeof(struct node);
+		tlen -= sizeof(struct node);
 		memcpy(buf + *len, p, sizeof(struct node));
+
+		/* Same hack as lower down for checksum. */
+		np = (struct node *)(buf + *len);
+		np->region = NULL;
+
 		*len += sizeof(struct node);
 	}
 
 	if (p->region == NULL)
 		return;
 
-	memcpy(buf + *len, p->region, rlen);
-	*len += rlen;
+	slen = *len;
+	memcpy(buf + *len, p->region, tlen);
+	*len += tlen;
 
 	if (p->rtop == 0 && p->rbase == 0)
 		return;
 
 	rlen = (p->rtop - p->rbase) + 1;
 	for (i = 0; i < rlen; i++) {
+		/*
+		 * Set the region to NULL for the data we are going to
+		 * write otherwise the checksum will be weird per machine.
+		 */
+		np = (struct node *)((u_int8_t *)(buf + slen) + offset +
+		    (i * sizeof(struct node)));
+		np->region = NULL;
+
 		np = (struct node *)((u_int8_t *)p->region + offset +
 		    (i * sizeof(struct node)));
 
@@ -917,6 +939,8 @@ cyon_storelog_replay(struct store_header *header)
 			rnode = cyon_malloc(sizeof(struct node));
 			memset(rnode, 0, sizeof(struct node));
 		}
+
+		store_modified = 1;
 
 		switch (slog.op) {
 		case CYON_OP_SETAUTH:
