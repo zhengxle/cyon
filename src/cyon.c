@@ -220,8 +220,11 @@ main(int argc, char *argv[])
 
 		if (storelog_always_sync == 0 &&
 		    ((now - last_storelog_flush) >= 1)) {
+
+			cyon_store_lock(1);
 			last_storelog_flush = now;
 			cyon_storelog_flush();
+			cyon_store_unlock();
 		}
 
 		cyon_storewrite_wait(0);
