@@ -420,6 +420,7 @@ void
 cyon_storelog_reopen(int wrlog)
 {
 	struct stat	st;
+	int		flags;
 	char		fpath[MAXPATHLEN], *fmt;
 
 	if (lfd != -1) {
@@ -438,7 +439,15 @@ cyon_storelog_reopen(int wrlog)
 			fatal("log open cancelled, log '%s' exists", fpath);
 	}
 
-	lfd = open(fpath, O_CREAT | O_APPEND | O_WRONLY, 0700);
+	flags = O_CREAT | O_APPEND | O_WRONLY;
+	if (storelog_always_sync) {
+		if (storelog_use_datasync)
+			flags |= O_DSYNC;
+		else
+			flags |= O_SYNC;
+	}
+
+	lfd = open(fpath, flags, 0700);
 	if (lfd == -1)
 		fatal("could not open logfile %s: %s", fpath, errno_s);
 	if (fstat(lfd, &st) == -1)
@@ -541,43 +550,38 @@ cyon_storelog_write(u_int8_t op, u_int8_t *key, u_int32_t klen,
     u_int8_t *data, u_int32_t dlen, u_int32_t flags)
 {
 	u_int32_t		len;
-	u_int8_t		*buf;
-	struct store_log	slog;
+	struct store_log	*slog;
+	u_int8_t		*buf, *p;
 
 	if (store_nowrite)
 		return;
 
-	memset(&slog, 0, sizeof(slog));
-
-	slog.op = op;
-	slog.klen = klen;
-	slog.dlen = dlen;
-	slog.flags = flags;
-	memcpy(slog.magic, store_log_magic, 4);
-
-	len = klen + dlen + (sizeof(u_int32_t) * 2);
+	len = sizeof(struct store_log) + klen + dlen;
 	buf = cyon_malloc(len);
 
-	memcpy(buf, &klen, sizeof(u_int32_t));
-	memcpy(buf + sizeof(u_int32_t), &dlen, sizeof(u_int32_t));
-	memcpy(buf + (sizeof(u_int32_t) * 2), key, klen);
+	slog = (struct store_log *)buf;
+	memset(slog, 0, sizeof(*slog));
+
+	slog->op = op;
+	slog->klen = klen;
+	slog->dlen = dlen;
+	slog->flags = flags;
+	memcpy(slog->magic, store_log_magic, 4);
+
+	p = buf + sizeof(*slog);
+	memcpy(p, key, slog->klen);
 	if (dlen > 0)
-		memcpy(buf + (sizeof(u_int32_t) * 2) + klen, data, dlen);
+		memcpy(p + slog->klen, data, dlen);
 
 	SHA_Init(&shactx);
 	SHA_Update(&shactx, buf, len);
-	SHA_Final(slog.hash, &shactx);
+	SHA_Final(slog->hash, &shactx);
 
-	cyon_atomic_write(lfd, &slog, sizeof(slog), CYON_NO_CHECKSUM);
-	cyon_atomic_write(lfd, buf + (sizeof(u_int32_t) * 2),
-	    len - (sizeof(u_int32_t) * 2), CYON_NO_CHECKSUM);
+	cyon_atomic_write(lfd, buf, len, CYON_NO_CHECKSUM);
+	cyon_mem_free(buf);
 
 	log_modified = 1;
-	cyon_mem_free(buf);
-	store_log_offset += sizeof(slog) + (len - (sizeof(u_int32_t) * 2));
-
-	if (storelog_always_sync)
-		cyon_storelog_flush();
+	store_log_offset += len;
 }
 
 static void
@@ -688,10 +692,10 @@ static void
 cyon_storelog_replay(struct store_header *header)
 {
 	struct stat		st;
-	struct store_log	slog;
 	u_int8_t		*buf;
 	u_int64_t		len, olen;
 	u_int8_t		*key, *data;
+	struct store_log	slog, *plog;
 	u_int64_t		added, removed;
 	char			fpath[MAXPATHLEN];
 	u_char			hash[SHA_DIGEST_LENGTH];
@@ -733,7 +737,7 @@ cyon_storelog_replay(struct store_header *header)
 		if (memcmp(slog.magic, store_log_magic, 4))
 			fatal("logfile is corrupted, run repair tool");
 
-		len = slog.klen + slog.dlen + (sizeof(u_int32_t) * 2);
+		len = slog.klen + slog.dlen + sizeof(slog);
 		if (len > olen) {
 			if (buf != NULL)
 				cyon_mem_free(buf);
@@ -741,25 +745,26 @@ cyon_storelog_replay(struct store_header *header)
 		}
 
 		olen = len;
-		memcpy(buf, &(slog.klen), sizeof(u_int32_t));
-		memcpy(buf + sizeof(u_int32_t),
-		    &(slog.dlen), sizeof(u_int32_t));
+		memcpy(buf, &slog, sizeof(slog));
+		cyon_atomic_read(lfd, buf + sizeof(slog),
+		    len - sizeof(slog), CYON_NO_CHECKSUM);
 
-		cyon_atomic_read(lfd, (buf + (sizeof(u_int32_t) * 2)),
-		    slog.klen + slog.dlen, CYON_NO_CHECKSUM);
+		plog = (struct store_log *)buf;
+		memcpy(hash, plog->hash, SHA_DIGEST_LENGTH);
+		memset(plog->hash, '\0', SHA_DIGEST_LENGTH);
 
 		SHA_Init(&shactx);
 		SHA_Update(&shactx, buf, len);
-		SHA_Final(hash, &shactx);
+		SHA_Final(plog->hash, &shactx);
 
-		if (memcmp(hash, slog.hash, SHA_DIGEST_LENGTH))
+		if (memcmp(hash, plog->hash, SHA_DIGEST_LENGTH))
 			fatal("hash is wrong for entry, run repair tool");
 
 		header->offset += sizeof(slog) + slog.klen + slog.dlen;
 
-		key = buf + (sizeof(u_int32_t) * 2);
+		key = buf + sizeof(slog);
 		if (slog.dlen > 0)
-			data = buf + (sizeof(u_int32_t) * 2) + slog.klen;
+			data = buf + sizeof(slog) + slog.klen;
 		else
 			data = NULL;
 
