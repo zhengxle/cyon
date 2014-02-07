@@ -38,15 +38,16 @@ static struct {
 	char	*label;
 	char	*descr;
 } use_options[] = {
-	{ 'a',	NULL,		"Always sync to disk after a storelog_write" },
+	{ 'a',	NULL,		"Sync to disk after each write op (slow)" },
 	{ 'b',	"ip",		"Bind to the given IP address" },
-	{ 'd',	"storedir",	"Directory where all data is stored" },
+	{ 'd',	NULL,		"Runs Cyon in disk store mode" },
 	{ 'f',	NULL,		"Runs cyon in foreground mode" },
 	{ 'n',	NULL,		"No data persistence" },
 	{ 'p',	"port",		"Use given port to listen for connections" },
+	{ 'r',	"storedir",	"Directory where all data is stored" },
 	{ 's',	"storename",	"Name of the cyon store" },
+	{ 't',	"threads",	"Number of threads to run with" },
 	{ 'w',	"interval",	"Time in minutes in between store writes" },
-	{ 'z',	NULL,		"Use fdatasync instead of fsync" },
 	{ 0,	NULL,		NULL },
 };
 
@@ -61,8 +62,7 @@ pthread_mutex_t		store_write_lock;
 u_int64_t		last_store_write;
 u_int8_t		server_started = 0;
 u_int8_t		signaled_store_write;
-u_int8_t		storelog_always_sync = 0;
-u_int8_t		storelog_use_datasync = 0;
+u_int8_t		store_always_sync = 0;
 u_int32_t		idle_timeout = CYON_IDLE_TIMER_MAX;
 
 static pid_t		writepid = -1;
@@ -78,23 +78,24 @@ main(int argc, char *argv[])
 	int		ch, err;
 	u_int8_t	foreground;
 	char		fpath[MAXPATHLEN];
-	u_int64_t	last_storelog_flush, last_signaled_write_check;
+	u_int64_t	last_store_flush, last_signaled_write_check;
 
 	port = 3331;
 	foreground = 0;
 	storepath = NULL;
 	ip = "127.0.0.1";
+	store_mode = CYON_MEM_STORE;
 
-	while ((ch = getopt(argc, argv, "ab:d:fi:np:s:t:w:z")) != -1) {
+	while ((ch = getopt(argc, argv, "ab:dfi:np:r:s:t:w:z")) != -1) {
 		switch (ch) {
 		case 'a':
-			storelog_always_sync = 1;
+			store_always_sync = 1;
 			break;
 		case 'b':
 			ip = optarg;
 			break;
 		case 'd':
-			storepath = optarg;
+			store_mode = CYON_DISK_STORE;
 			break;
 		case 'f':
 			foreground = 1;
@@ -114,6 +115,9 @@ main(int argc, char *argv[])
 			if (err != CYON_RESULT_OK)
 				fatal("Invalid port: %s", optarg);
 			break;
+		case 'r':
+			storepath = optarg;
+			break;
 		case 's':
 			storename = optarg;
 			break;
@@ -127,9 +131,6 @@ main(int argc, char *argv[])
 			if (err != CYON_RESULT_OK)
 				fatal("Invalid write interval: %s", optarg);
 			store_write_int = (store_write_int * 60) * 1000;
-			break;
-		case 'z':
-			storelog_use_datasync = 1;
 			break;
 		case '?':
 		default:
@@ -146,6 +147,9 @@ main(int argc, char *argv[])
 		    "Please set storepath (-d) and storename (-s)\n");
 		usage();
 	}
+
+	if (store_mode == CYON_DISK_STORE && store_nowrite)
+		fatal("Cannot use -n with -d");
 
 	if (argc != 2)
 		usage();
@@ -218,12 +222,14 @@ main(int argc, char *argv[])
 			cyon_storewrite_start();
 		}
 
-		if (storelog_always_sync == 0 &&
-		    ((now - last_storelog_flush) >= 1)) {
+		if (store_always_sync == 0 &&
+		    ((now - last_store_flush) >= 1)) {
 
 			cyon_store_lock(1);
-			last_storelog_flush = now;
-			cyon_storelog_flush();
+			last_store_flush = now;
+			cyon_store_flush(CYON_STOREFLUSH_LOG);
+			if (store_mode == CYON_DISK_STORE)
+				cyon_store_flush(CYON_STOREFLUSH_DISK);
 			cyon_store_unlock();
 		}
 
@@ -337,6 +343,7 @@ cyon_storewrite_wait(int final)
 	    WTERMSIG(status) || WCOREDUMP(status)) {
 		cyon_log(LOG_NOTICE,
 		    "store write failed, see log messages (%d)", writepid);
+		fatal("debug");
 	} else {
 		cyon_log(LOG_NOTICE,
 		    "store write completed (%d)", writepid);

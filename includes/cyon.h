@@ -83,6 +83,12 @@ void		fatal(const char *, ...);
 
 #define CYON_KEY_MAX			(USHRT_MAX - 1)
 
+#define CYON_MEM_STORE			0
+#define CYON_DISK_STORE			1
+
+#define CYON_STOREFLUSH_LOG		0
+#define CYON_STOREFLUSH_DISK		1
+
 #define CYON_STORE_WRITE_NOFORK		0
 #define CYON_STORE_WRITE_FORK		1
 #define CYON_STORE_WRITE_INTERVAL	60000
@@ -102,6 +108,7 @@ void		fatal(const char *, ...);
 #define CYON_WRITELOG_FILE		"%s/%s.write.log"
 #define CYON_STORE_FILE			"%s/%s.store"
 #define CYON_STORE_TMPFILE		"%s/%s.store.tmp"
+#define CYON_STORE_DSFILE		"%s/%s.ds"
 
 #define THREAD_VAR(x)			pthread_getspecific(x)
 
@@ -221,17 +228,17 @@ extern u_int16_t		thread_count;
 extern pthread_mutex_t		store_write_lock;
 extern u_int64_t		last_store_write;
 extern u_char			*store_passphrase;
+extern u_int8_t			store_mode;
 extern u_int8_t			store_nowrite;
 extern u_int8_t			server_started;
-extern u_int8_t			storelog_always_sync;
+extern u_int8_t			store_always_sync;
 extern u_int8_t			signaled_store_write;
-extern u_int8_t			storelog_use_datasync;
 
 u_int64_t	cyon_time_ms(void);
 u_int64_t	cyon_time_us(void);
 void		cyon_log_init(void);
+void		cyon_store_flush(int);
 void		cyon_storelog_reopen(int);
-void		cyon_storelog_flush(void);
 void		cyon_storewrite_start(void);
 void		cyon_log(int, const char *, ...);
 void		cyon_strlcpy(char *, const char *, size_t);

@@ -422,6 +422,9 @@ cyon_connection_recv_get(struct netbuf *nb)
 
 		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);
 		net_send_queue(c, data, dlen, 0);
+
+		if (store_mode == CYON_DISK_STORE)
+			cyon_mem_free(data);
 	} else {
 		ret.op = CYON_OP_RESULT_ERROR;
 		net_write32((u_int8_t *)&(ret.length), 0);
