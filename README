@@ -14,5 +14,16 @@ and it recycles the log file after the data store is verified.
 Cyon can also run as read-only slaves, or as non-persistent database where
 it will not commit anything to disk.
 
+Cyon stores its data/index using a form of lookup-table, with all operations
+being bound to the length of the key. However Cyon guarantees that for each
+key of the same length the operations are O(1).
+
+Cyon tries its best to keep memory overhead low.
+
+The CLI included is very basic and a bad representation of how a client
+library should be done. It's only there for debugging purposes.
+
+A client library for C exists, but is not part of this tree yet.
+
 Under heavy development, but works fine.
 joris@coders.se for bugs, patches, insults.
