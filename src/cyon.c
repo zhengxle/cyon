@@ -86,9 +86,10 @@ main(int argc, char *argv[])
 	foreground = 0;
 	storepath = NULL;
 	ip = "127.0.0.1";
+	store_retain_logs = 0;
 	store_mode = CYON_MEM_STORE;
 
-	while ((ch = getopt(argc, argv, "ab:dfi:np:r:s:t:w:z")) != -1) {
+	while ((ch = getopt(argc, argv, "ab:dfi:lnp:r:s:t:w:xz")) != -1) {
 		switch (ch) {
 		case 'a':
 			store_always_sync = 1;
@@ -108,6 +109,9 @@ main(int argc, char *argv[])
 			if (err != CYON_RESULT_OK)
 				fatal("Invalid timeout value: %s", optarg);
 			idle_timeout = idle_timeout * 1000;
+			break;
+		case 'l':
+			store_retain_logs = 1;
 			break;
 		case 'n':
 			store_nopersist = 1;
@@ -238,7 +242,8 @@ main(int argc, char *argv[])
 			cyon_store_unlock();
 		}
 
-		cyon_storewrite_wait(0);
+		if (writepid != -1)
+			cyon_storewrite_wait(0);
 	}
 
 	if (writepid != -1)
@@ -264,6 +269,8 @@ cyon_storewrite_start(void)
 	}
 
 	writepid = cyon_store_write();
+	if (writepid == CYON_RESULT_OK)
+		writepid = -1;
 }
 
 static void
@@ -319,8 +326,11 @@ cyon_server_bind(struct listener *l, char *ip, u_int16_t port)
 static void
 cyon_storewrite_wait(int final)
 {
+	int		fd;
+	struct stat	st;
 	pid_t		pid;
 	int		status;
+	char		fpath[MAXPATHLEN], *hex;
 
 	if (writepid == -1)
 		return;
@@ -348,9 +358,36 @@ cyon_storewrite_wait(int final)
 	    WTERMSIG(status) || WCOREDUMP(status)) {
 		cyon_log(LOG_NOTICE,
 		    "store write failed, see log messages (%d)", writepid);
-	} else {
-		cyon_log(LOG_NOTICE,
-		    "store write completed (%d)", writepid);
+		writepid = -1;
+		return;
+	}
+
+	snprintf(fpath, sizeof(fpath), CYON_STORE_FILE, storepath, storename);
+	if ((fd = open(fpath, O_RDONLY)) == -1) {
+		cyon_log(LOG_NOTICE, "cannot verify store: %s", errno_s);
+		return;
+	}
+
+	if (fstat(fd, &st) == -1) {
+		close(fd);
+		cyon_log(LOG_NOTICE, "cannot stat store: %s", errno_s);
+		return;
+	}
+
+	if (lseek(fd, st.st_size - SHA_DIGEST_LENGTH, SEEK_SET) == -1) {
+		close(fd);
+		cyon_log(LOG_NOTICE, "cannot seek to SHA: %s", errno_s);
+		return;
+	}
+
+	cyon_atomic_read(fd, store_state, SHA_DIGEST_LENGTH, CYON_NO_CHECKSUM);
+	close(fd);
+
+	cyon_log(LOG_NOTICE, "store write completed (%d)", writepid);
+	if (store_retain_logs) {
+		cyon_sha_hex(store_state, &hex);
+		cyon_log(LOG_NOTICE, "new state is %s", hex);
+		cyon_mem_free(hex);
 	}
 
 	writepid = -1;

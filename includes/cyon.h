@@ -89,6 +89,9 @@ void		fatal(const char *, ...);
 #define CYON_STOREFLUSH_LOG		0
 #define CYON_STOREFLUSH_DISK		1
 
+#define CYON_NO_CHECKSUM		0
+#define CYON_ADD_CHECKSUM		1
+
 #define CYON_STORE_WRITE_NOFORK		0
 #define CYON_STORE_WRITE_FORK		1
 #define CYON_STORE_WRITE_INTERVAL	60000
@@ -105,6 +108,7 @@ void		fatal(const char *, ...);
 #define NETBUF_USE_OPPOOL		0x04
 
 #define CYON_LOG_FILE			"%s/%s.log"
+#define CYON_MLOG_FILE			"%s/%s.log.%s"
 #define CYON_WRITELOG_FILE		"%s/%s.write.log"
 #define CYON_STORE_FILE			"%s/%s.store"
 #define CYON_STORE_TMPFILE		"%s/%s.store.tmp"
@@ -229,11 +233,13 @@ extern pthread_mutex_t		store_write_lock;
 extern u_int64_t		last_store_write;
 extern u_char			*store_passphrase;
 extern u_int8_t			store_mode;
+extern u_int8_t			store_retain_logs;
 extern u_int8_t			store_nopersist;
 extern u_int8_t			server_started;
 extern u_int8_t			store_always_sync;
 extern u_int8_t			cyon_readonly_mode;
 extern u_int8_t			signaled_store_write;
+extern u_int8_t			store_state[SHA_DIGEST_LENGTH];
 
 u_int64_t	cyon_time_ms(void);
 u_int64_t	cyon_time_us(void);
@@ -254,6 +260,10 @@ void		*cyon_realloc(void *, size_t);
 char		*cyon_strdup(const char *);
 void		cyon_mem_free(void *);
 void		cyon_mem_init(void);
+
+void		cyon_sha_hex(u_int8_t *, char **);
+void		cyon_atomic_read(int, void *, u_int32_t, int);
+void		cyon_atomic_write(int, void *, u_int32_t, int);
 
 void		cyon_connection_init(void);
 void		cyon_connection_prune(void);

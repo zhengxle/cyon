@@ -23,6 +23,8 @@
 
 #include "cyon.h"
 
+extern SHA_CTX		shactx;
+
 void
 cyon_debug_internal(char *file, int line, const char *fmt, ...)
 {
@@ -131,4 +133,65 @@ cyon_time_us(void)
 		return (0);
 
 	return ((tv.tv_sec * 1000000) + tv.tv_usec);
+}
+
+void
+cyon_atomic_write(int fd, void *buf, u_int32_t len, int calc)
+{
+	ssize_t		r;
+	u_int8_t	*d;
+	u_int32_t	written;
+
+	d = buf;
+	written = 0;
+	while (written != len) {
+		r = write(fd, d + written, len - written);
+		if (r == -1 && errno == EINTR)
+			continue;
+		if (r == -1)
+			fatal("cyon_atomic_write(): %s", errno_s);
+
+		written += r;
+	}
+
+	if (calc)
+		SHA_Update(&shactx, buf, len);
+}
+
+void
+cyon_atomic_read(int fd, void *buf, u_int32_t len, int calc)
+{
+	ssize_t		r;
+	u_int8_t	*d;
+	u_int32_t	done;
+
+	d = buf;
+	done = 0;
+	while (done != len) {
+		r = read(fd, d + done, len - done);
+		if (r == -1 && errno == EINTR)
+			continue;
+
+		/* Treat eof (r == 0) as an error. */
+		if (r == -1 || r == 0) {
+			fatal("cyon_atomic_read(): %s",
+			    (r == -1) ? errno_s : "eof");
+		}
+
+		done += r;
+	}
+
+	if (calc)
+		SHA_Update(&shactx, buf, len);
+}
+
+void
+cyon_sha_hex(u_int8_t *hash, char **out)
+{
+	int		i;
+
+	*out = cyon_malloc((SHA_DIGEST_LENGTH * 2) + 1);
+	memset(*out, '\0', (SHA_DIGEST_LENGTH * 2) + 1);
+	for (i = 0; i < SHA_DIGEST_LENGTH; i++)
+		sprintf(*out + (i * 2), "%02x", hash[i]);
 }
