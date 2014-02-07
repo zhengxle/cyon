@@ -211,6 +211,7 @@ cyon_store_get(u_int8_t *key, u_int32_t len, u_int8_t **out, u_int32_t *olen)
 		dlen = *(u_int32_t *)p->region;
 		if (dlen != sizeof(struct disknode))
 			fatal("dlen != sizeof(struct disknode)");
+
 		dn = (struct disknode *)(p->region + sizeof(u_int32_t));
 		cyon_diskstore_read(dn, out, olen);
 	} else {
@@ -1107,6 +1108,7 @@ cyon_traverse_node(struct getkeys_ctx *ctx, struct connection *c,
 			len = *(u_int32_t *)rp->region;
 			if (len != sizeof(struct disknode))
 				fatal("dlen != sizeof(struct disknode)");
+
 			dn = (struct disknode *)(rp->region + sizeof(len));
 			cyon_diskstore_read(dn, &data, &len);
 		} else {
