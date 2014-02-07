@@ -97,7 +97,7 @@ u_int64_t		key_count;
 char			*storepath;
 char			*storename;
 u_int8_t		store_mode;
-u_int8_t		store_nowrite;
+u_int8_t		store_nopersist;
 u_char			*store_passphrase;
 
 static int		lfd;
@@ -135,7 +135,10 @@ cyon_store_init(void)
 		    "store loaded from disk with %ld keys", key_count);
 	}
 
-	if (!store_nowrite)
+	if (cyon_readonly_mode)
+		cyon_log(LOG_NOTICE, "Cyon is in read-only mode");
+
+	if (!store_nopersist)
 		cyon_storelog_reopen(0);
 
 	if (store_mode == CYON_DISK_STORE)
@@ -240,13 +243,16 @@ cyon_store_del(u_int8_t *key, u_int32_t len)
 	u_int8_t	*old;
 	u_int32_t	offset, rlen;
 
+	if (!replaying_log && cyon_readonly_mode)
+		return (CYON_RESULT_ERROR);
+
 	if ((p = cyon_node_lookup(key, len, CYON_RESOLVE_NOTHING)) == NULL)
 		return (CYON_RESULT_ERROR);
 
 	if (!(p->flags & NODE_FLAG_HASDATA))
 		return (CYON_RESULT_ERROR);
 
-	if (!replaying_log && !store_nowrite)
+	if (!replaying_log && !store_nopersist)
 		cyon_storelog_write(CYON_OP_DEL, key, len, NULL, 0, 0);
 
 	key_count--;
@@ -277,6 +283,9 @@ cyon_store_replace(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 	u_int8_t		*old;
 	u_int32_t		nlen, rlen, offset;
 
+	if (!replaying_log && cyon_readonly_mode)
+		return (CYON_RESULT_ERROR);
+
 	if ((p = cyon_node_lookup(key, len, CYON_RESOLVE_NOTHING)) == NULL)
 		return (CYON_RESULT_ERROR);
 
@@ -289,7 +298,7 @@ cyon_store_replace(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 		dlen = sizeof(*dn);
 	}
 
-	if (!replaying_log && !store_nowrite)
+	if (!replaying_log && !store_nopersist)
 		cyon_storelog_write(CYON_OP_REPLACE, key, len, data, dlen, 0);
 
 	old = p->region;
@@ -330,6 +339,9 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
 		cyon_log(LOG_NOTICE, "Attempt to put key > CYON_KEY_MAX");
 		return (CYON_RESULT_ERROR);
 	}
+
+	if (!replaying_log && cyon_readonly_mode)
+		return (CYON_RESULT_ERROR);
 
 	p = rnode;
 	for (i = 0; i < len; i++) {
@@ -426,7 +438,7 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
 		}
 	}
 
-	if (!replaying_log && !store_nowrite)
+	if (!replaying_log && !store_nopersist)
 		cyon_storelog_write(CYON_OP_PUT, key, len, data, dlen, flags);
 
 	old = p->region;
@@ -463,6 +475,9 @@ cyon_store_flush(int what)
 {
 	int		fd;
 	int		ret;
+
+	if (cyon_readonly_mode || store_nopersist)
+		return;
 
 	if (what == CYON_STOREFLUSH_LOG) {
 		if (log_modified == 0)
@@ -579,7 +594,7 @@ cyon_store_write(void)
 		    SHA256_DIGEST_LENGTH, CYON_ADD_CHECKSUM);
 	}
 
-	if (store_nowrite == 0) {
+	if (store_nopersist == 0) {
 		len = 0;
 		blen = 128 * 1024 * 1024;
 		buf = cyon_malloc(blen);
@@ -626,7 +641,7 @@ cyon_storelog_write(u_int8_t op, u_int8_t *key, u_int32_t klen,
 	struct store_log	*slog;
 	u_int8_t		*buf, *p;
 
-	if (store_nowrite)
+	if (store_nopersist)
 		return;
 
 	len = sizeof(struct store_log) + klen + dlen;
@@ -743,7 +758,7 @@ cyon_store_map(void)
 		    SHA256_DIGEST_LENGTH, CYON_ADD_CHECKSUM);
 	}
 
-	if (store_nowrite == 0) {
+	if (store_nopersist == 0) {
 		rnode = cyon_malloc(sizeof(struct node));
 		cyon_atomic_read(fd, rnode,
 		    sizeof(struct node), CYON_ADD_CHECKSUM);
@@ -764,6 +779,7 @@ cyon_store_map(void)
 static void
 cyon_storelog_replay(struct store_header *header)
 {
+	u_int8_t		ch;
 	struct stat		st;
 	u_int8_t		*buf;
 	u_int64_t		len, olen;
@@ -805,10 +821,44 @@ cyon_storelog_replay(struct store_header *header)
 	replaying_log = 1;
 	added = removed = 0;
 
-	while (header->offset < (u_int64_t)st.st_size) {
-		cyon_atomic_read(lfd, &slog, sizeof(slog), CYON_NO_CHECKSUM);
-		if (memcmp(slog.magic, store_log_magic, 4))
-			fatal("logfile is corrupted, run repair tool");
+	for (;;) {
+		while (header->offset < (u_int64_t)st.st_size) {
+			cyon_atomic_read(lfd, &ch, 1, CYON_NO_CHECKSUM);
+			if (ch != store_log_magic[0]) {
+				header->offset++;
+				continue;
+			}
+
+			header->offset++;
+
+			if ((header->offset + sizeof(slog) - 1) >=
+			    (u_int64_t)st.st_size)
+				break;
+
+			cyon_atomic_read(lfd, &slog.magic[1],
+			    sizeof(slog) - 1, CYON_NO_CHECKSUM);
+			header->offset += sizeof(slog) - 1;
+
+			slog.magic[0] = ch;
+			if (!memcmp(slog.magic, store_log_magic, 4))
+				break;
+
+			cyon_log(LOG_NOTICE,
+			    "corrupted log entry in log @ %ld", header->offset);
+			cyon_readonly_mode = 1;
+		}
+
+		if (header->offset >= (u_int64_t)st.st_size)
+			break;
+
+		if ((header->offset + slog.dlen +
+		    slog.klen) >= (u_int64_t)st.st_size) {
+			cyon_readonly_mode = 1;
+			cyon_log(LOG_NOTICE,
+			    "log corrupted, would read past at %ld",
+			    header->offset);
+			continue;
+		}
 
 		len = slog.klen + slog.dlen + sizeof(slog);
 		if (len > olen) {
@@ -821,6 +871,7 @@ cyon_storelog_replay(struct store_header *header)
 		memcpy(buf, &slog, sizeof(slog));
 		cyon_atomic_read(lfd, buf + sizeof(slog),
 		    len - sizeof(slog), CYON_NO_CHECKSUM);
+		header->offset += slog.klen + slog.dlen;
 
 		plog = (struct store_log *)buf;
 		memcpy(hash, plog->hash, SHA_DIGEST_LENGTH);
@@ -830,10 +881,13 @@ cyon_storelog_replay(struct store_header *header)
 		SHA_Update(&shactx, buf, len);
 		SHA_Final(plog->hash, &shactx);
 
-		if (memcmp(hash, plog->hash, SHA_DIGEST_LENGTH))
-			fatal("hash is wrong for entry, run repair tool");
-
-		header->offset += sizeof(slog) + slog.klen + slog.dlen;
+		if (memcmp(hash, plog->hash, SHA_DIGEST_LENGTH)) {
+			cyon_readonly_mode = 1;
+			cyon_log(LOG_NOTICE,
+			    "Incorrect checksum for log @ %ld, skipping",
+			    header->offset);
+			continue;
+		}
 
 		key = buf + sizeof(slog);
 		if (slog.dlen > 0)
@@ -980,8 +1034,10 @@ cyon_atomic_read(int fd, void *buf, u_int32_t len, int calc)
 			continue;
 
 		/* Treat eof (r == 0) as an error. */
-		if (r == -1 || r == 0)
-			fatal("cyon_atomic_read(): %s", errno_s);
+		if (r == -1 || r == 0) {
+			fatal("cyon_atomic_read(): %s",
+			    (r == -1) ? errno_s : "eof");
+		}
 
 		done += r;
 	}

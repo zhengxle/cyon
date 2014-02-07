@@ -48,6 +48,7 @@ static struct {
 	{ 's',	"storename",	"Name of the cyon store" },
 	{ 't',	"threads",	"Number of threads to run with" },
 	{ 'w',	"interval",	"Time in minutes in between store writes" },
+	{ 'x',	NULL,		"Read-only mode" },
 	{ 0,	NULL,		NULL },
 };
 
@@ -63,6 +64,7 @@ u_int64_t		last_store_write;
 u_int8_t		server_started = 0;
 u_int8_t		signaled_store_write;
 u_int8_t		store_always_sync = 0;
+u_int8_t		cyon_readonly_mode = 0;
 u_int32_t		idle_timeout = CYON_IDLE_TIMER_MAX;
 
 static pid_t		writepid = -1;
@@ -108,7 +110,7 @@ main(int argc, char *argv[])
 			idle_timeout = idle_timeout * 1000;
 			break;
 		case 'n':
-			store_nowrite = 1;
+			store_nopersist = 1;
 			break;
 		case 'p':
 			port = cyon_strtonum(optarg, 1, 65535, &err);
@@ -132,6 +134,9 @@ main(int argc, char *argv[])
 				fatal("Invalid write interval: %s", optarg);
 			store_write_int = (store_write_int * 60) * 1000;
 			break;
+		case 'x':
+			cyon_readonly_mode = 1;
+			break;
 		case '?':
 		default:
 			usage();
@@ -148,7 +153,7 @@ main(int argc, char *argv[])
 		usage();
 	}
 
-	if (store_mode == CYON_DISK_STORE && store_nowrite)
+	if (store_mode == CYON_DISK_STORE && store_nopersist)
 		fatal("Cannot use -n with -d");
 
 	if (argc != 2)
