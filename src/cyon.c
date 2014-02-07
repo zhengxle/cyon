@@ -343,7 +343,6 @@ cyon_storewrite_wait(int final)
 	    WTERMSIG(status) || WCOREDUMP(status)) {
 		cyon_log(LOG_NOTICE,
 		    "store write failed, see log messages (%d)", writepid);
-		fatal("debug");
 	} else {
 		cyon_log(LOG_NOTICE,
 		    "store write completed (%d)", writepid);
