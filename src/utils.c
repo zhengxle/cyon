@@ -136,7 +136,7 @@ cyon_time_us(void)
 }
 
 void
-cyon_atomic_write(int fd, void *buf, u_int32_t len, int calc)
+cyon_atomic_write(int fd, void *buf, u_int32_t len, SHA_CTX *sctx)
 {
 	ssize_t		r;
 	u_int8_t	*d;
@@ -154,12 +154,12 @@ cyon_atomic_write(int fd, void *buf, u_int32_t len, int calc)
 		written += r;
 	}
 
-	if (calc)
-		SHA_Update(&shactx, buf, len);
+	if (sctx != NULL)
+		SHA_Update(sctx, buf, len);
 }
 
 void
-cyon_atomic_read(int fd, void *buf, u_int32_t len, int calc)
+cyon_atomic_read(int fd, void *buf, u_int32_t len, SHA_CTX *sctx)
 {
 	ssize_t		r;
 	u_int8_t	*d;
@@ -181,8 +181,8 @@ cyon_atomic_read(int fd, void *buf, u_int32_t len, int calc)
 		done += r;
 	}
 
-	if (calc)
-		SHA_Update(&shactx, buf, len);
+	if (sctx != NULL)
+		SHA_Update(sctx, buf, len);
 }
 
 void

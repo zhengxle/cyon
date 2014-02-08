@@ -386,7 +386,7 @@ cyon_storewrite_wait(int final)
 	cyon_log(LOG_NOTICE, "store write completed (%d)", writepid);
 	if (store_retain_logs) {
 		cyon_sha_hex(store_state, &hex);
-		cyon_log(LOG_NOTICE, "new state is %s", hex);
+		cyon_log(LOG_NOTICE, "new store state is %s", hex);
 		cyon_mem_free(hex);
 	}
 

@@ -262,8 +262,8 @@ void		cyon_mem_free(void *);
 void		cyon_mem_init(void);
 
 void		cyon_sha_hex(u_int8_t *, char **);
-void		cyon_atomic_read(int, void *, u_int32_t, int);
-void		cyon_atomic_write(int, void *, u_int32_t, int);
+void		cyon_atomic_read(int, void *, u_int32_t, SHA_CTX *);
+void		cyon_atomic_write(int, void *, u_int32_t, SHA_CTX *);
 
 void		cyon_connection_init(void);
 void		cyon_connection_prune(void);
