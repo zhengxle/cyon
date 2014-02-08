@@ -41,6 +41,16 @@
 
 #define STORE_HAS_PASSPHRASE		0x01
 
+#define NODE_REGION_OFFSET(o, p)					\
+	do {								\
+		o = sizeof(u_int32_t) + *(u_int32_t *)p;		\
+	} while (0)
+
+#define NODE_REGION_RANGE(r, p)						\
+	do {								\
+		r = ((p->rtop - p->rbase) + 1) * sizeof(struct node);	\
+	} while (0)
+
 struct node {
 	u_int8_t	rbase;
 	u_int8_t	rtop;
@@ -264,8 +274,8 @@ cyon_store_del(u_int8_t *key, u_int32_t len)
 		cyon_mem_free(p->region);
 		p->region = NULL;
 	} else {
-		offset = sizeof(u_int32_t) + *(u_int32_t *)p->region;
-		rlen = ((p->rtop - p->rbase) + 1) * sizeof(struct node);
+		NODE_REGION_OFFSET(offset, p->region);
+		NODE_REGION_RANGE(rlen, p);
 		old = p->region;
 
 		p->region = cyon_malloc(rlen);
@@ -308,8 +318,8 @@ cyon_store_replace(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 		rlen = 0;
 		offset = 0;
 	} else {
-		offset = sizeof(u_int32_t) + *(u_int32_t *)p->region;
-		rlen = ((p->rtop - p->rbase) + 1) * sizeof(struct node);
+		NODE_REGION_OFFSET(offset, p->region);
+		NODE_REGION_RANGE(rlen, p);
 	}
 
 	nlen = sizeof(u_int32_t) + dlen + rlen;
@@ -361,7 +371,7 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
 
 			if (p->flags & NODE_FLAG_HASDATA) {
 				old = p->region;
-				offset = sizeof(u_int32_t) + *(u_int32_t *)old;
+				NODE_REGION_OFFSET(offset, old);
 				rlen = offset + sizeof(struct node);
 			} else {
 				offset = 0;
@@ -380,7 +390,7 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
 
 		if (idx < p->rbase || idx > p->rtop) {
 			old = p->region;
-			olen = ((p->rtop - p->rbase) + 1) * sizeof(struct node);
+			NODE_REGION_RANGE(olen, p);
 
 			if (idx < p->rbase) {
 				base = p->rbase - idx;
@@ -391,14 +401,13 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
 			}
 
 			if (p->flags & NODE_FLAG_HASDATA) {
-				offset = sizeof(u_int32_t) +
-				    *(u_int32_t *)p->region;
+				NODE_REGION_OFFSET(offset, p->region);
 			} else {
 				offset = 0;
 			}
 
-			rlen = offset +
-			    (((p->rtop - p->rbase) + 1) * sizeof(struct node));
+			NODE_REGION_RANGE(rlen, p);
+			rlen += offset;
 			base = offset + (base * sizeof(struct node));
 
 			p->region = cyon_malloc(rlen);
@@ -412,7 +421,7 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
 		}
 
 		if (p->flags & NODE_FLAG_HASDATA)
-			offset = sizeof(u_int32_t) + *(u_int32_t *)p->region;
+			NODE_REGION_OFFSET(offset, p->region);
 		else
 			offset = 0;
 
@@ -445,7 +454,7 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
 	old = p->region;
 
 	if (old != NULL) {
-		olen = ((p->rtop - p->rbase) + 1) * sizeof(struct node);
+		NODE_REGION_RANGE(olen, p);
 		rlen = dlen + olen;
 	} else {
 		olen = 0;
@@ -695,15 +704,15 @@ cyon_store_writenode(int fd, struct node *p, u_int8_t *buf, u_int32_t blen,
 	u_int32_t		offset, i, rlen, tlen, slen;
 
 	if (p->flags & NODE_FLAG_HASDATA)
-		offset = sizeof(u_int32_t) + *(u_int32_t *)p->region;
+		NODE_REGION_OFFSET(offset, p->region);
 	else
 		offset = 0;
 
 	if (p->rbase == 0 && p->rtop == 0) {
 		tlen = offset;
 	} else {
-		tlen = offset +
-		    (((p->rtop - p->rbase) + 1) * sizeof(struct node));
+		NODE_REGION_RANGE(tlen, p);
+		tlen += offset;
 	}
 
 	if (p == rnode)
@@ -981,8 +990,8 @@ cyon_store_mapnode(int fd, struct node *p)
 		cyon_atomic_read(fd, &offset,
 		    sizeof(u_int32_t), &shactx);
 		if (p->rbase != 0 && p->rtop != 0) {
-			rlen = sizeof(u_int32_t) + offset +
-			    (p->rtop - p->rbase + 1) * sizeof(struct node);
+			NODE_REGION_RANGE(rlen, p);
+			rlen += sizeof(u_int32_t) + offset;
 		} else {
 			rlen = sizeof(u_int32_t) + offset;
 		}
@@ -996,7 +1005,7 @@ cyon_store_mapnode(int fd, struct node *p)
 	} else {
 		offset = 0;
 		if (p->rbase != 0 || p->rtop != 0) {
-			rlen = (p->rtop - p->rbase + 1) * sizeof(struct node);
+			NODE_REGION_RANGE(rlen, p);
 			p->region = cyon_malloc(rlen);
 			cyon_atomic_read(fd, p->region, rlen, &shactx);
 		}
@@ -1037,7 +1046,7 @@ cyon_node_lookup(u_int8_t *key, u_int32_t len, u_int8_t resolve)
 			return (NULL);
 
 		if (p->flags & NODE_FLAG_HASDATA)
-			rlen = sizeof(u_int32_t) + *(u_int32_t *)p->region;
+			NODE_REGION_OFFSET(rlen, p->region);
 		else
 			rlen = 0;
 
