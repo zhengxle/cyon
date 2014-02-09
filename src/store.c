@@ -605,7 +605,7 @@ cyon_store_write(void)
 	char			fpath[MAXPATHLEN], tpath[MAXPATHLEN];
 
 	if (rnode == NULL || store_modified == 0 || store_nopersist) {
-		cyon_log(LOG_NOTICE, "store write issued, but nothing to do");
+		cyon_log(LOG_NOTICE, "store is clean, not writing");
 		return (CYON_RESULT_OK);
 	}
 
