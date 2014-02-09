@@ -330,7 +330,8 @@ cyon_storewrite_wait(int final)
 	struct stat	st;
 	pid_t		pid;
 	int		status;
-	char		fpath[MAXPATHLEN], *hex;
+	u_int8_t	hash[SHA_DIGEST_LENGTH];
+	char		fpath[MAXPATHLEN], tpath[MAXPATHLEN], *hex, *old;
 
 	if (writepid == -1)
 		return;
@@ -380,16 +381,36 @@ cyon_storewrite_wait(int final)
 		return;
 	}
 
-	cyon_atomic_read(fd, store_state, SHA_DIGEST_LENGTH, CYON_NO_CHECKSUM);
+	cyon_atomic_read(fd, hash, SHA_DIGEST_LENGTH, CYON_NO_CHECKSUM);
 	close(fd);
 
-	cyon_log(LOG_NOTICE, "store write completed (%d)", writepid);
+	cyon_sha_hex(hash, &hex);
+	cyon_sha_hex(store_state, &old);
+
 	if (store_retain_logs) {
-		cyon_sha_hex(store_state, &hex);
-		cyon_log(LOG_NOTICE, "new store state is %s", hex);
-		cyon_mem_free(hex);
+		cyon_log(LOG_NOTICE, "state transition %s -> %s", old, hex);
+	} else {
+		snprintf(fpath, sizeof(fpath),
+		    CYON_LOG_FILE, storepath, storename, old);
+		if (unlink(fpath) == -1) {
+			cyon_log(LOG_NOTICE,
+			    "cannot unlink old log: %s (%s)", fpath, errno_s);
+		}
 	}
 
+	snprintf(fpath, sizeof(fpath),
+	    CYON_LOG_FILE, storepath, storename, hex);
+	snprintf(tpath, sizeof(tpath),
+	    CYON_WRITELOG_FILE, storepath, storename);
+
+	if (rename(tpath, fpath) == -1)
+		fatal("cannot move tmp log into place: %s", errno_s);
+
+	cyon_mem_free(hex);
+	cyon_mem_free(old);
+	memcpy(store_state, hash, SHA_DIGEST_LENGTH);
+
+	cyon_log(LOG_NOTICE, "store write completed (%d)", writepid);
 	writepid = -1;
 }
 

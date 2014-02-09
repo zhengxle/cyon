@@ -107,12 +107,11 @@ void		fatal(const char *, ...);
 #define NETBUF_NO_FRAGMENT		0x01
 #define NETBUF_USE_OPPOOL		0x04
 
-#define CYON_LOG_FILE			"%s/%s.log"
-#define CYON_MLOG_FILE			"%s/%s.log.%s"
-#define CYON_WRITELOG_FILE		"%s/%s.write.log"
+#define CYON_LOG_FILE			"%s/%s.%s"
+#define CYON_WRITELOG_FILE		"%s/%s.write"
 #define CYON_STORE_FILE			"%s/%s.store"
-#define CYON_STORE_TMPFILE		"%s/%s.store.tmp"
-#define CYON_STORE_DSFILE		"%s/%s.ds"
+#define CYON_STORE_TMPFILE		"%s/%s.store.new"
+#define CYON_STORE_DSFILE		"%s/%s.data"
 
 #define THREAD_VAR(x)			pthread_getspecific(x)
 
