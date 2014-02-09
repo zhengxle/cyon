@@ -621,7 +621,8 @@ cyon_store_write(void)
 
 	if (pid != 0) {
 		store_modified = 0;
-		cyon_storelog_reopen(1);
+		if (!cyon_readonly_mode)
+			cyon_storelog_reopen(1);
 		cyon_store_unlock();
 		cyon_log(LOG_NOTICE, "store write started (%d)", pid);
 		return (pid);

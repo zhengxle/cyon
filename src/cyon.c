@@ -398,13 +398,15 @@ cyon_storewrite_wait(int final)
 		}
 	}
 
-	snprintf(fpath, sizeof(fpath),
-	    CYON_LOG_FILE, storepath, storename, hex);
-	snprintf(tpath, sizeof(tpath),
-	    CYON_WRITELOG_FILE, storepath, storename);
+	if (!cyon_readonly_mode) {
+		snprintf(fpath, sizeof(fpath),
+		    CYON_LOG_FILE, storepath, storename, hex);
+		snprintf(tpath, sizeof(tpath),
+		    CYON_WRITELOG_FILE, storepath, storename);
 
-	if (rename(tpath, fpath) == -1)
-		fatal("cannot move tmp log into place: %s", errno_s);
+		if (rename(tpath, fpath) == -1)
+			fatal("cannot move tmp log into place: %s", errno_s);
+	}
 
 	cyon_mem_free(hex);
 	cyon_mem_free(old);
