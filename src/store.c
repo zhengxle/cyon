@@ -163,7 +163,7 @@ cyon_store_init(void)
 		    "store loaded from disk with %ld keys", key_count);
 	}
 
-	if (!store_nopersist)
+	if (!store_nopersist && !cyon_readonly_mode)
 		cyon_storelog_reopen(0);
 
 	if (store_errors) {
@@ -780,7 +780,10 @@ cyon_storelog_replay(char *state, int when)
 
 	if (st.st_size == 0) {
 		close(lfd);
-		return (CYON_RESULT_ERROR);
+
+		if (when == CYON_REPLAY_STARTUP)
+			return (CYON_RESULT_ERROR);
+		return (CYON_RESULT_OK);
 	}
 
 	olen = 0;
@@ -1027,8 +1030,6 @@ cyon_store_map(void)
 	if ((fd = open(fpath, O_RDONLY)) == -1) {
 		if (errno != ENOENT)
 			fatal("open(%s): %s", fpath, errno_s);
-
-		store_modified = 1;
 
 		cyon_storelog_replay_all();
 		return;

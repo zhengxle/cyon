@@ -585,8 +585,6 @@ cyon_connection_recv_auth(struct netbuf *nb)
 	    (store_passphrase == NULL && klen == 0)) {
 		ret.op = CYON_OP_RESULT_OK;
 		c->flags |= CONN_AUTHENTICATED;
-		cyon_log(LOG_NOTICE, "connection from %s is now authenticated",
-		    inet_ntoa(c->sin.sin_addr));
 	} else {
 		ret.op = CYON_OP_RESULT_ERROR;
 		cyon_log(LOG_NOTICE, "failed authentication from %s",

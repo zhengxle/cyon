@@ -7,7 +7,7 @@ S_SRC=	src/cyon.c src/connection.c src/net.c src/mem.c \
 	src/threads.c
 S_OBJS=	$(S_SRC:.c=.o)
 
-C_SRC=	src/cli.c src/shared.c
+C_SRC=	src/cmd.c src/shared.c
 C_OBJS=	$(C_SRC:.c=.o)
 
 CFLAGS+=-Wall -Wstrict-prototypes -Wmissing-prototypes
@@ -18,13 +18,13 @@ LDFLAGS+=-lpthread -lssl -lcrypto
 all:
 	make cyon-server
 	rm -f src/shared.o
-	make cyon-cli
+	make cyon-cmd
 
 cyon-server: $(S_SRC)
 	@CFLAGS="-DCYON_SERVER=1" OBJS="$(S_OBJS)" BIN=cyon-server make generic
 
-cyon-cli: $(C_SRC)
-	@BIN="cyon-cli" OBJS="$(C_OBJS)" make generic
+cyon-cmd: $(C_SRC)
+	@BIN="cyon-cmd" OBJS="$(C_OBJS)" make generic
 
 generic: $(OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) -o $(BIN)
@@ -33,4 +33,4 @@ generic: $(OBJS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f src/*.o cyon-server cyon-cli
+	rm -f src/*.o cyon-server cyon-cmd

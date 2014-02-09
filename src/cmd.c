@@ -49,14 +49,12 @@ int		cyon_upload(u_int8_t, u_int8_t *,
 void		cyon_cli_upload(u_int8_t, char **);
 void		cyon_cli_get(u_int8_t, char **);
 void		cyon_cli_del(u_int8_t, char **);
-void		cyon_cli_quit(u_int8_t, char **);
 void		cyon_cli_stats(u_int8_t, char **);
 void		cyon_cli_write(u_int8_t, char **);
 void		cyon_cli_setauth(u_int8_t, char **);
 void		cyon_cli_getkeys(u_int8_t, char **);
 void		cyon_cli_replay(u_int8_t, char **);
 
-int		quit = 0;
 int		cfd = -1;
 char		*host = NULL;
 SSL		*ssl = NULL;
@@ -66,7 +64,6 @@ struct {
 	char		*cmd;
 	void		(*cb)(u_int8_t, char **);
 } cmds[] = {
-	{ "quit",		cyon_cli_quit },
 	{ "put",		cyon_cli_upload },
 	{ "get",		cyon_cli_get },
 	{ "del",		cyon_cli_del },
@@ -83,9 +80,14 @@ struct {
 void
 usage(void)
 {
+	int			i;
 	extern const char	*__progname;
 
-	fprintf(stderr, "Usage: %s [-s host]\n", __progname);
+	fprintf(stderr, "Usage: %s [-s host] [cmd]\n", __progname);
+	fprintf(stderr, "Available commands:\n");
+	for (i = 0; cmds[i].cmd != NULL; i++)
+		printf("\t%s\n", cmds[i].cmd);
+
 	exit(1);
 }
 
@@ -93,10 +95,10 @@ int
 main(int argc, char *argv[])
 {
 	int			r;
+	char			*input;
 	struct cyon_op		*op, ret;
 	size_t			len, slen;
-	u_int8_t		count, i, authpwd, *p;
-	char			*input, **ap, *args[10];
+	u_int8_t		i, authpwd, *p;
 
 	authpwd = 0;
 	while ((r = getopt(argc, argv, "ps:")) != -1) {
@@ -116,7 +118,7 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (host == NULL)
+	if (host == NULL || argv[0] == NULL)
 		usage();
 
 	cyon_connect();
@@ -153,32 +155,10 @@ main(int argc, char *argv[])
 	if (ret.op != CYON_OP_RESULT_OK)
 		fatal("access denied");
 
-	while (quit != 1) {
-		printf("\rcyon(%s)> ", host);
-		fflush(stdout);
-
-		input = NULL;
-		if (getline(&input, &len, stdin) == -1)
-			break;
-
-		count = 0;
-		for (ap = args; ap < &args[9] &&
-		    (*ap = strsep(&input, " \n")) != NULL;) {
-			if (**ap != '\0') {
-				ap++;
-				count++;
-			}
-		}
-		*ap = NULL;
-
-		for (i = 0; cmds[i].cmd != NULL; i++) {
-			if (strcmp(cmds[i].cmd, args[0]))
-				continue;
-
-			cmds[i].cb(count, args);
-		}
-
-		free(input);
+	for (i = 0; cmds[i].cmd != NULL; i++) {
+		if (strcmp(cmds[i].cmd, argv[0]))
+			continue;
+		cmds[i].cb(argc, argv);
 	}
 
 	cyon_disconnect();
@@ -189,7 +169,6 @@ main(int argc, char *argv[])
 void
 cyon_ssl_init(void)
 {
-	u_int8_t	i;
 	u_int32_t	len;
 	X509		*cert;
 	u_char		fp[EVP_MAX_MD_SIZE];
@@ -213,11 +192,6 @@ cyon_ssl_init(void)
 		fatal("no peer certificate received? %s", ssl_errno_s);
 	if (X509_digest(cert, EVP_sha1(), fp, &len) < 0)
 		fatal("could not read fingerprint: %s", ssl_errno_s);
-
-	printf("SHA1 fingerprint ");
-	for (i = 0; i < len; i++)
-		printf("%02x%s", fp[i], (i != (len - 1)) ? ":" : "");
-	printf("\n");
 }
 
 void
@@ -252,8 +226,6 @@ cyon_connect(void)
 		fatal("connect(): %s", errno_s);
 
 	freeaddrinfo(results);
-
-	printf("connected to %s:%d\n", host, 3331);
 }
 
 void
@@ -344,7 +316,7 @@ cyon_get(u_int8_t *key, u_int32_t klen, u_int8_t **out, u_int32_t *dlen)
 			fatal("malloc(): %s", errno_s);
 		cyon_ssl_read(*out, *dlen);
 	} else if (op.op != CYON_OP_RESULT_ERROR) {
-		printf("Unexpected result from server: %d\n", op.op);
+		fatal("Unexpected result from server: %d", op.op);
 	}
 
 	return (*out != NULL);
@@ -374,7 +346,7 @@ cyon_getkeys(u_int8_t *key, u_int32_t klen, u_int8_t **out, u_int32_t *dlen)
 		}
 
 	} else if (op.op != CYON_OP_RESULT_ERROR) {
-		printf("Unexpected result from server: %d\n", op.op);
+		fatal("Unexpected result from server: %d", op.op);
 	}
 
 	return (op.op == CYON_OP_RESULT_OK);
@@ -395,15 +367,9 @@ cyon_del(u_int8_t *key, u_int32_t klen)
 	cyon_ssl_read(&op, sizeof(op));
 
 	if (op.op != CYON_OP_RESULT_OK && op.op != CYON_OP_RESULT_ERROR)
-		printf("Unexpected result from server: %d\n", op.op);
+		fatal("Unexpected result from server: %d", op.op);
 
 	return (op.op == CYON_OP_RESULT_OK);
-}
-
-void
-cyon_cli_quit(u_int8_t argc, char **argv)
-{
-	quit = 1;
 }
 
 void
@@ -422,42 +388,28 @@ cyon_cli_upload(u_int8_t argc, char **argv)
 	} else if (!strcmp(argv[0], "makelink")) {
 		id = CYON_OP_MAKELINK;
 	} else {
-		printf("invalid\n");
-		return;
+		fatal("invalid request: %s", argv[0]);
 	}
 
 	if (argc != 3) {
-		printf("%s [key] [%s]\n", argv[0],
+		fatal("%s [key] [%s]", argv[0],
 		    (id == CYON_OP_MAKELINK) ? "origin" : "infile");
-		return;
 	}
 
 	if (id != CYON_OP_MAKELINK) {
-		if ((fd = open(argv[2], O_RDONLY)) == -1) {
-			printf("could not open '%s': %s\n", argv[2], errno_s);
-			return;
-		}
+		if ((fd = open(argv[2], O_RDONLY)) == -1)
+			fatal("could not open '%s': %s", argv[2], errno_s);
 
-		if (fstat(fd, &st) == -1) {
-			close(fd);
-			printf("fstat() failed: %s\n", errno_s);
-			return;
-		}
+		if (fstat(fd, &st) == -1)
+			fatal("fstat() failed: %s", errno_s);
 
 		size = st.st_size;
-		if ((d = malloc(size)) == NULL) {
-			close(fd);
-			printf("malloc(): failed: %s\n", errno_s);
-			return;
-		}
+		if ((d = malloc(size)) == NULL)
+			fatal("malloc(): failed: %s", errno_s);
 
 		r = read(fd, d, size);
-		if (r != size) {
-			close(fd);
-			free(d);
-			printf("could not read from '%s'\n", argv[2]);
-			return;
-		}
+		if (r != size)
+			fatal("could not read from '%s'", argv[2]);
 	} else {
 		d = (u_int8_t *)argv[2];
 		size = strlen(argv[2]);
@@ -465,9 +417,9 @@ cyon_cli_upload(u_int8_t argc, char **argv)
 
 	if (cyon_upload(id,
 	    (u_int8_t *)argv[1], strlen(argv[1]), d, size))
-		printf("Key was added successfully.\n");
+		printf("OK.\n");
 	else
-		printf("The key was not added successfully.\n");
+		fatal("The key was not added successfully.");
 
 	if (id != CYON_OP_MAKELINK) {
 		free(d);
@@ -483,10 +435,8 @@ cyon_cli_get(u_int8_t argc, char **argv)
 	u_int32_t	dlen;
 	u_int8_t	*data;
 
-	if (argc != 3) {
-		printf("get [key] [outfile]\n");
-		return;
-	}
+	if (argc != 3)
+		fatal("get [key] [outfile]\n");
 
 	if (cyon_get((u_int8_t *)argv[1], strlen(argv[1]), &data, &dlen)) {
 		printf("Received %d bytes of data\n", dlen);
@@ -500,11 +450,11 @@ cyon_cli_get(u_int8_t argc, char **argv)
 		free(data);
 
 		if (r != (ssize_t)dlen)
-			printf("Error while writing to '%s'.\n", argv[2]);
+			fatal("Error while writing to '%s'", argv[2]);
 		else
-			printf("Data stored in '%s'.\n", argv[2]);
+			printf("Data stored in '%s'\n", argv[2]);
 	} else {
-		printf("The server did not return a result.\n");
+		fatal("The server did not return a result");
 	}
 }
 
@@ -517,16 +467,12 @@ cyon_cli_getkeys(u_int8_t argc, char **argv)
 	u_int8_t	*out, *p;
 	u_int32_t	len, i, dlen;
 
-	if (argc < 2) {
-		printf("getkeys [key] [show]\n");
-		return;
-	}
+	if (argc < 2)
+		fatal("getkeys [key] [show]");
 
 	r = cyon_getkeys((u_int8_t *)argv[1], strlen(argv[1]), &out, &len);
-	if (!r) {
-		printf("No keys found, or an error occured\n");
-		return;
-	}
+	if (!r)
+		fatal("A server error occured");
 
 	if (len == 0) {
 		printf("no keys found\n");
@@ -565,15 +511,13 @@ cyon_cli_getkeys(u_int8_t argc, char **argv)
 void
 cyon_cli_del(u_int8_t argc, char **argv)
 {
-	if (argc != 2) {
-		printf("del [key]\n");
-		return;
-	}
+	if (argc != 2)
+		fatal("del [key]");
 
 	if (cyon_del((u_int8_t *)argv[1], strlen(argv[1])))
-		printf("Key was successfully deleted.\n");
+		printf("%s was successfully deleted\n", argv[1]);
 	else
-		printf("An error occured while deleting the key.\n");
+		fatal("Error occured while deleting %s", argv[1]);
 }
 
 void
@@ -588,9 +532,9 @@ cyon_cli_write(u_int8_t argc, char **argv)
 	memset(&op, 0, sizeof(op));
 	cyon_ssl_read(&op, sizeof(op));
 	if (op.op == CYON_OP_RESULT_OK)
-		printf("Ok starting a write, check logs for result.\n");
+		printf("Ok starting a write, check logs for result\n");
 	else
-		printf("Unexpected result from store write.\n");
+		fatal("Unexpected result from store write");
 }
 
 void
@@ -607,11 +551,8 @@ cyon_cli_stats(u_int8_t argc, char **argv)
 	memset(&op, 0, sizeof(op));
 	cyon_ssl_read(&op, sizeof(op));
 	len = net_read32((u_int8_t *)&(op.length));
-	if (op.op != CYON_OP_RESULT_OK || len != sizeof(struct cyon_stats)) {
-		printf("Received unexpected result from server (%d, %d).\n",
-		    op.op, len);
-		return;
-	}
+	if (op.op != CYON_OP_RESULT_OK || len != sizeof(struct cyon_stats))
+		fatal("Received unexpected result from server");
 
 	cyon_ssl_read(&stats, sizeof(stats));
 	stats.keycount = be64toh(stats.keycount);
@@ -630,10 +571,8 @@ cyon_cli_setauth(u_int8_t argc, char **argv)
 	struct cyon_op		*op, ret;
 	SHA256_CTX		sha256ctx;
 
-	if (argc != 2) {
-		printf("Usage: set-auth [passphrase]\n");
-		return;
-	}
+	if (argc != 2)
+		fatal("Usage: set-auth [passphrase]");
 
 	len = sizeof(struct cyon_op) + SHA256_DIGEST_LENGTH;
 	if ((p = malloc(len)) == NULL)
@@ -653,9 +592,9 @@ cyon_cli_setauth(u_int8_t argc, char **argv)
 	memset(&ret, 0, sizeof(ret));
 	cyon_ssl_read(&ret, sizeof(struct cyon_op));
 	if (ret.op == CYON_OP_RESULT_OK)
-		printf("Passphrase was successfully set.\n");
+		printf("Passphrase was successfully set\n");
 	else
-		printf("Error while setting the passphrase.\n");
+		fatal("Error while setting the passphrase");
 }
 
 void
@@ -665,10 +604,8 @@ cyon_cli_replay(u_int8_t argc, char **argv)
 	u_int32_t		len;
 	struct cyon_op		*op, ret;
 
-	if (argc != 2) {
-		printf("Usage: replay [state]\n");
-		return;
-	}
+	if (argc != 2)
+		fatal("Usage: replay [state]");
 
 	len = sizeof(struct cyon_op) + SHA_DIGEST_STRING_LEN;
 	if ((p = malloc(len)) == NULL)
@@ -687,5 +624,5 @@ cyon_cli_replay(u_int8_t argc, char **argv)
 	if (ret.op == CYON_OP_RESULT_OK)
 		printf("The log was applied successfully, see messages\n");
 	else
-		printf("Error while applying the log, see messages\n");
+		fatal("Error while applying the log, see messages");
 }
