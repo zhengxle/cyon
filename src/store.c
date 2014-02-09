@@ -77,6 +77,7 @@ struct store_log {
 struct disknode {
 	u_int8_t	magic[4];
 	u_int8_t	hash[SHA_DIGEST_LENGTH];
+	u_int8_t	state[SHA_DIGEST_LENGTH];
 	u_int16_t	didx;
 	u_int32_t	klen;
 	u_int32_t	dlen;
@@ -1063,6 +1064,7 @@ cyon_store_mapnode(int fd, struct node *p)
 {
 	struct node		*np;
 	struct disknode		*dn;
+	char			*hex;
 	u_int8_t		*data;
 	u_int32_t		rlen, i, offset, len;
 
@@ -1098,9 +1100,10 @@ cyon_store_mapnode(int fd, struct node *p)
 				cyon_mem_free(data);
 			} else {
 				store_errors++;
+				cyon_sha_hex(dn->state, &hex);
 				cyon_log(LOG_NOTICE,
-				    "DISK DATA MISSING AT OFFSET %ld",
-				    dn->offset);
+				    "DISK DATA MISSING FROM %s", hex);
+				cyon_mem_free(hex);
 			}
 		}
 	} else {
@@ -1286,6 +1289,7 @@ cyon_diskstore_write(u_int8_t *key, u_int32_t klen, u_int8_t *d, u_int32_t dlen)
 	dn->dlen = dlen;
 	dn->offset = store_ds_offset;
 	memcpy(dn->magic, store_log_magic, 4);
+	memcpy(dn->state, store_state, SHA_DIGEST_LENGTH);
 
 	p = buf + sizeof(*dn);
 	memcpy(p, key, dn->klen);
