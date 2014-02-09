@@ -686,9 +686,6 @@ cyon_storelog_write(u_int8_t op, u_int8_t *key, u_int32_t klen,
 	if (store_nopersist)
 		return;
 
-	printf("writing to storelog: %d %.*s (%d bytes)\n", op,
-	    klen, key, dlen);
-
 	len = sizeof(struct store_log) + klen + dlen;
 	buf = cyon_malloc(len);
 
