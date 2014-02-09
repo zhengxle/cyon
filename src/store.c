@@ -858,6 +858,7 @@ cyon_storelog_replay(void)
 	u_int8_t		ch;
 	struct stat		st;
 	u_int8_t		*buf;
+	int			errors;
 	long			offset;
 	u_int64_t		len, olen;
 	u_int8_t		*key, *data;
@@ -873,7 +874,7 @@ cyon_storelog_replay(void)
 
 	if ((lfd = open(fpath, O_RDONLY)) == -1) {
 		if (errno == ENOENT)
-			return (0);
+			return (CYON_RESULT_ERROR);
 
 		fatal("open(%s): %s", fpath, errno_s);
 	}
@@ -883,11 +884,12 @@ cyon_storelog_replay(void)
 
 	if (st.st_size == 0) {
 		close(lfd);
-		return (0);
+		return (CYON_RESULT_ERROR);
 	}
 
 	olen = 0;
 	buf = NULL;
+	errors = 0;
 	offset = 0;
 	replaying_log = 1;
 	added = removed = 0;
@@ -915,12 +917,14 @@ cyon_storelog_replay(void)
 			cyon_log(LOG_NOTICE,
 			    "corrupted log entry in log @ %ld", offset);
 			cyon_readonly_mode = 1;
+			errors++;
 		}
 
 		if (offset >= st.st_size)
 			break;
 
 		if ((offset + slog.dlen + slog.klen) > st.st_size) {
+			errors++;
 			cyon_readonly_mode = 1;
 			cyon_log(LOG_NOTICE,
 			    "log corrupted, would read past at %ld", offset);
@@ -949,6 +953,7 @@ cyon_storelog_replay(void)
 		SHA_Final(plog->hash, &shactx);
 
 		if (memcmp(hash, plog->hash, SHA_DIGEST_LENGTH)) {
+			errors++;
 			cyon_readonly_mode = 1;
 			cyon_log(LOG_NOTICE,
 			    "Incorrect checksum for log @ %ld, skipping",
@@ -1004,20 +1009,24 @@ cyon_storelog_replay(void)
 		}
 	}
 
-	cyon_log(LOG_NOTICE,
-	    "store replay completed: %ld added, %ld removed",
-	    added, removed);
+	if (errors) {
+		cyon_log(LOG_NOTICE, "store replay failed, errors occured");
+	} else {
+		cyon_log(LOG_NOTICE,
+		    "store replay completed: %ld added, %ld removed",
+		    added, removed);
+	}
 
 	close(lfd);
 	replaying_log = 0;
 
-	if (store_retain_logs) {
+	if (!errors && store_retain_logs) {
 		cyon_store_current_state(store_state);
 		cyon_sha_hex(store_state, &hex);
 		cyon_log(LOG_NOTICE, "store state is %s", hex);
 	}
 
-	return (1);
+	return ((errors) ? CYON_RESULT_ERROR : CYON_RESULT_OK);
 }
 
 static void
