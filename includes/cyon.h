@@ -303,6 +303,7 @@ void		cyon_store_lock(int);
 void		cyon_store_init(void);
 pid_t		cyon_store_write(void);
 void		cyon_store_unlock(void);
+void		cyon_store_current_state(u_int8_t *);
 int		cyon_store_del(u_int8_t *, u_int32_t);
 int		cyon_store_put(u_int8_t *, u_int32_t, u_int8_t *,
 		    u_int32_t, u_int32_t);

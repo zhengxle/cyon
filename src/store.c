@@ -85,8 +85,8 @@ struct disknode {
 
 static void		cyon_store_map(void);
 static void		cyon_diskstore_open(void);
+static int		cyon_storelog_replay(void);
 static void		cyon_store_mapnode(int, struct node *);
-static void		cyon_storelog_replay(struct store_header *);
 static struct node	*cyon_node_lookup(u_int8_t *, u_int32_t, u_int8_t);
 static void		cyon_traverse_node(struct getkeys_ctx *,
 			    struct connection *, struct node *);
@@ -529,7 +529,7 @@ cyon_storelog_reopen(int wrlog)
 {
 	struct stat	st;
 	int		flags;
-	char		fpath[MAXPATHLEN], *fmt, *hex;
+	char		fpath[MAXPATHLEN], *hex;
 
 	if (lfd != -1) {
 		cyon_store_flush(CYON_STOREFLUSH_LOG);
@@ -567,14 +567,13 @@ cyon_storelog_reopen(int wrlog)
 pid_t
 cyon_store_write(void)
 {
-	struct stat		st;
 	pid_t			pid;
 	u_int8_t		*buf;
 	struct store_header	header;
 	int			fd, ret;
 	u_int32_t		len, blen;
 	u_char			hash[SHA_DIGEST_LENGTH];
-	char			*hex, fpath[MAXPATHLEN], tpath[MAXPATHLEN];
+	char			fpath[MAXPATHLEN], tpath[MAXPATHLEN];
 
 	if (rnode == NULL || store_modified == 0 || store_nopersist)
 		return (CYON_RESULT_OK);
@@ -809,8 +808,9 @@ cyon_store_map(void)
 			fatal("open(%s): %s", fpath, errno_s);
 
 		store_modified = 1;
-		memset(&header, 0, sizeof(header));
-		cyon_storelog_replay(&header);
+
+		while (cyon_storelog_replay())
+			;
 		return;
 	}
 
@@ -846,12 +846,12 @@ cyon_store_map(void)
 		cyon_mem_free(hex);
 	}
 
-	cyon_storelog_replay(&header);
-
+	while (cyon_storelog_replay())
+		;
 }
 
-static void
-cyon_storelog_replay(struct store_header *header)
+static int
+cyon_storelog_replay(void)
 {
 	u_int8_t		ch;
 	struct stat		st;
@@ -871,13 +871,18 @@ cyon_storelog_replay(struct store_header *header)
 
 	if ((lfd = open(fpath, O_RDONLY)) == -1) {
 		if (errno == ENOENT)
-			return;
+			return (0);
 
 		fatal("open(%s): %s", fpath, errno_s);
 	}
 
 	if (fstat(lfd, &st) == -1)
 		fatal("fstat(): %s", errno_s);
+
+	if (st.st_size == 0) {
+		close(lfd);
+		return (0);
+	}
 
 	olen = 0;
 	buf = NULL;
@@ -1005,10 +1010,12 @@ cyon_storelog_replay(struct store_header *header)
 	replaying_log = 0;
 
 	if (store_retain_logs) {
-		cyon_store_current_state(hash);
-		cyon_sha_hex(hash, &hex);
+		cyon_store_current_state(store_state);
+		cyon_sha_hex(store_state, &hex);
 		cyon_log(LOG_NOTICE, "store state is %s", hex);
 	}
+
+	return (1);
 }
 
 static void
