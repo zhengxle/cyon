@@ -158,8 +158,8 @@ cyon_atomic_write(int fd, void *buf, u_int32_t len, SHA_CTX *sctx)
 		SHA_Update(sctx, buf, len);
 }
 
-void
-cyon_atomic_read(int fd, void *buf, u_int32_t len, SHA_CTX *sctx)
+int
+cyon_atomic_read(int fd, void *buf, u_int32_t len, SHA_CTX *sctx, int canfail)
 {
 	ssize_t		r;
 	u_int8_t	*d;
@@ -174,6 +174,9 @@ cyon_atomic_read(int fd, void *buf, u_int32_t len, SHA_CTX *sctx)
 
 		/* Treat eof (r == 0) as an error. */
 		if (r == -1 || r == 0) {
+			if (canfail)
+				return (CYON_RESULT_ERROR);
+
 			fatal("cyon_atomic_read(): %s",
 			    (r == -1) ? errno_s : "eof");
 		}
@@ -183,6 +186,8 @@ cyon_atomic_read(int fd, void *buf, u_int32_t len, SHA_CTX *sctx)
 
 	if (sctx != NULL)
 		SHA_Update(sctx, buf, len);
+
+	return (CYON_RESULT_OK);
 }
 
 void

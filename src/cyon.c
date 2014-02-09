@@ -381,7 +381,7 @@ cyon_storewrite_wait(int final)
 		return;
 	}
 
-	cyon_atomic_read(fd, hash, SHA_DIGEST_LENGTH, CYON_NO_CHECKSUM);
+	cyon_atomic_read(fd, hash, SHA_DIGEST_LENGTH, CYON_NO_CHECKSUM, 0);
 	close(fd);
 
 	cyon_sha_hex(hash, &hex);

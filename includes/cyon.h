@@ -78,6 +78,8 @@ void		fatal(const char *, ...);
 #define cyon_debug(fmt, ...)
 #endif
 
+#define CYON_OP_DISK_DATA	150	/* Not an actual network op */
+
 #define STORE_KLEN_OFFSET(b)		((b + sizeof(struct cyon_op)))
 #define STORE_DLEN_OFFSET(b)		((b + sizeof(struct cyon_op) + 4))
 #define STORE_KEY_OFFSET(b)		((b + sizeof(struct cyon_op) + 8))
@@ -263,8 +265,8 @@ void		cyon_mem_free(void *);
 void		cyon_mem_init(void);
 
 void		cyon_sha_hex(u_int8_t *, char **);
-void		cyon_atomic_read(int, void *, u_int32_t, SHA_CTX *);
 void		cyon_atomic_write(int, void *, u_int32_t, SHA_CTX *);
+int		cyon_atomic_read(int, void *, u_int32_t, SHA_CTX *, int);
 
 void		cyon_connection_init(void);
 void		cyon_connection_prune(void);
