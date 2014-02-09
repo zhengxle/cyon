@@ -30,6 +30,7 @@ static int		cyon_connection_recv_op(struct netbuf *);
 static int		cyon_connection_recv_put(struct netbuf *);
 static int		cyon_connection_recv_get(struct netbuf *);
 static int		cyon_connection_recv_del(struct netbuf *);
+static int		cyon_connection_recv_replay(struct netbuf *);
 static int		cyon_connection_recv_replace(struct netbuf *);
 static int		cyon_connection_recv_auth(struct netbuf *);
 static int		cyon_connection_recv_setauth(struct netbuf *);
@@ -327,6 +328,9 @@ cyon_connection_recv_op(struct netbuf *nb)
 		break;
 	case CYON_OP_DEL:
 		r = net_recv_expand(c, nb, len, cyon_connection_recv_del);
+		break;
+	case CYON_OP_REPLAY:
+		r = net_recv_expand(c, nb, len, cyon_connection_recv_replay);
 		break;
 	case CYON_OP_REPLACE:
 		r = net_recv_expand(c, nb, len, cyon_connection_recv_replace);
@@ -677,4 +681,34 @@ cyon_connection_recv_stats(struct connection *c)
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);
 	net_send_queue(c, (u_int8_t *)&stats, sizeof(stats), 0);
 	net_send_flush(c);
+}
+
+static int
+cyon_connection_recv_replay(struct netbuf *nb)
+{
+	u_int32_t		slen;
+	char			*state;
+	struct cyon_op		ret, *op;
+	struct connection	*c = (struct connection *)nb->owner;
+
+	op = (struct cyon_op *)nb->buf;
+	slen = net_read32((u_int8_t *)&(op->length));
+	if (slen != SHA_DIGEST_STRING_LEN) {
+		cyon_log(LOG_NOTICE, "botched replay request from %s",
+		    inet_ntoa(c->sin.sin_addr));
+		return (CYON_RESULT_ERROR);
+	}
+
+	state = (char *)(nb->buf + sizeof(struct cyon_op));
+
+	memset(&ret, 0, sizeof(ret));
+	net_write32((u_int8_t *)&(ret.length), 0);
+
+	if (!cyon_storelog_replay(state, CYON_REPLAY_REQUEST))
+		ret.op = CYON_OP_RESULT_ERROR;
+	else
+		ret.op = CYON_OP_RESULT_OK;
+
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);
+	return (net_send_flush(c));
 }

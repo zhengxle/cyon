@@ -86,7 +86,7 @@ struct disknode {
 
 static void		cyon_store_map(void);
 static void		cyon_diskstore_open(void);
-static int		cyon_storelog_replay(void);
+static void		cyon_storelog_replay_all(void);
 static void		cyon_store_mapnode(int, struct node *);
 static struct node	*cyon_node_lookup(u_int8_t *, u_int32_t, u_int8_t);
 static void		cyon_traverse_node(struct getkeys_ctx *,
@@ -752,6 +752,196 @@ cyon_store_current_state(u_int8_t *hash)
 	store_validation = 0;
 }
 
+int
+cyon_storelog_replay(char *state, int when)
+{
+	u_int8_t		ch;
+	struct stat		st;
+	u_int8_t		*buf;
+	long			offset;
+	u_int64_t		len, olen;
+	u_int8_t		*key, *data;
+	struct store_log	slog, *plog;
+	u_int64_t		added, removed;
+	char			fpath[MAXPATHLEN], *hex;
+	u_char			hash[SHA_DIGEST_LENGTH];
+
+	snprintf(fpath, sizeof(fpath),
+	    CYON_LOG_FILE, storepath, storename, state);
+	if ((lfd = open(fpath, O_RDONLY)) == -1) {
+		if (errno == ENOENT)
+			return (CYON_RESULT_ERROR);
+
+		fatal("open(%s): %s", fpath, errno_s);
+	}
+
+	if (fstat(lfd, &st) == -1)
+		fatal("fstat(): %s", errno_s);
+
+	if (st.st_size == 0) {
+		close(lfd);
+		return (CYON_RESULT_ERROR);
+	}
+
+	olen = 0;
+	buf = NULL;
+	offset = 0;
+	replaying_log = 1;
+	added = removed = 0;
+
+	if (when == CYON_REPLAY_REQUEST)
+		store_errors = 0;
+
+	cyon_log(LOG_NOTICE, "applying log %s", fpath);
+	for (;;) {
+		while (offset < st.st_size) {
+			cyon_atomic_read(lfd, &ch, 1, NULL, 0);
+			offset++;
+
+			if (ch != store_log_magic[0])
+				continue;
+
+			if ((long)(offset + sizeof(slog) - 1) >= st.st_size)
+				break;
+
+			cyon_atomic_read(lfd, &slog.magic[1],
+			    sizeof(slog) - 1, NULL, 0);
+			offset += sizeof(slog) - 1;
+
+			slog.magic[0] = ch;
+			if (!memcmp(slog.magic, store_log_magic, 4))
+				break;
+		}
+
+		if (offset >= st.st_size)
+			break;
+
+		if ((offset + slog.dlen + slog.klen) > st.st_size) {
+			store_errors++;
+			cyon_log(LOG_NOTICE,
+			    "LOG CORRUPTED, would read past at %ld", offset);
+			continue;
+		}
+
+		len = slog.klen + slog.dlen + sizeof(slog);
+		if (len > olen) {
+			if (buf != NULL)
+				cyon_mem_free(buf);
+			buf = cyon_malloc(len);
+		}
+
+		olen = len;
+		memcpy(buf, &slog, sizeof(slog));
+		cyon_atomic_read(lfd, buf + sizeof(slog),
+		    len - sizeof(slog), NULL, 0);
+		offset += slog.klen + slog.dlen;
+
+		plog = (struct store_log *)buf;
+		memcpy(hash, plog->hash, SHA_DIGEST_LENGTH);
+		memset(plog->hash, '\0', SHA_DIGEST_LENGTH);
+
+		SHA_Init(&shactx);
+		SHA_Update(&shactx, buf, len);
+		SHA_Final(plog->hash, &shactx);
+
+		if (memcmp(hash, plog->hash, SHA_DIGEST_LENGTH)) {
+			store_errors++;
+			cyon_log(LOG_NOTICE,
+			    "INCORRECT CHECKSUM for log @ %ld, skipping",
+			    offset);
+			continue;
+		}
+
+		key = buf + sizeof(slog);
+		if (slog.dlen > 0)
+			data = buf + sizeof(slog) + slog.klen;
+		else
+			data = NULL;
+
+		if (rnode == NULL) {
+			rnode = cyon_malloc(sizeof(struct node));
+			memset(rnode, 0, sizeof(struct node));
+		}
+
+		store_modified = 1;
+
+		switch (slog.op) {
+		case CYON_OP_SETAUTH:
+			if (slog.klen != SHA256_DIGEST_LENGTH) {
+				cyon_log(LOG_NOTICE,
+				    "replay of setauth log entry failed");
+				break;
+			}
+
+			if (store_passphrase != NULL)
+				cyon_mem_free(store_passphrase);
+			store_passphrase = cyon_malloc(slog.klen);
+			memcpy(store_passphrase, key, slog.klen);
+			break;
+		case CYON_OP_PUT:
+			if (!cyon_store_put(key, slog.klen,
+			    data, slog.dlen, slog.flags)) {
+				if (when != CYON_REPLAY_REQUEST)
+					fatal("replay failed at this stage?");
+			}
+			added++;
+			break;
+		case CYON_OP_DEL:
+			if (!cyon_store_del(key, slog.klen)) {
+				if (when != CYON_REPLAY_REQUEST)
+					fatal("replay failed at this stage?");
+			}
+			removed++;
+			break;
+		case CYON_OP_REPLACE:
+			if (!cyon_store_replace(key,
+			    slog.klen, data, slog.dlen)) {
+				if (when != CYON_REPLAY_REQUEST)
+					fatal("replay failed at this stage?");
+			}
+			break;
+		case CYON_OP_DISK_DATA:
+			if (!cyon_diskstore_create(key,
+			    slog.klen, data, slog.dlen)) {
+				cyon_log(LOG_NOTICE, "disk data with no node");
+				store_errors++;
+			}
+			break;
+		default:
+			store_errors++;
+			printf("unknown log operation %d", slog.op);
+			break;
+		}
+	}
+
+	if (buf != NULL)
+		cyon_mem_free(buf);
+
+	if (store_errors) {
+		cyon_log(LOG_NOTICE, "LOG REPLAY *FAILED*, SEE ERRORS ABOVE");
+
+		if (when == CYON_REPLAY_REQUEST) {
+			cyon_readonly_mode = 1;
+			cyon_log(LOG_NOTICE, "FORCING READONLY MODE");
+		}
+	} else {
+		cyon_log(LOG_NOTICE,
+		    "store replay completed: %ld added, %ld removed",
+		    added, removed);
+	}
+
+	close(lfd);
+	replaying_log = 0;
+
+	if (!store_errors && store_retain_logs) {
+		cyon_store_current_state(store_state);
+		cyon_sha_hex(store_state, &hex);
+		cyon_log(LOG_NOTICE, "store state is %s", hex);
+	}
+
+	return ((store_errors) ? CYON_RESULT_ERROR : CYON_RESULT_OK);
+}
+
 static void
 cyon_store_writenode(int fd, struct node *p, u_int8_t *buf, u_int32_t blen,
     u_int32_t *len, SHA_CTX *sctx)
@@ -840,8 +1030,7 @@ cyon_store_map(void)
 
 		store_modified = 1;
 
-		while (cyon_storelog_replay())
-			;
+		cyon_storelog_replay_all();
 		return;
 	}
 
@@ -877,186 +1066,23 @@ cyon_store_map(void)
 		cyon_mem_free(hex);
 	}
 
-	while (cyon_storelog_replay())
-		;
+	cyon_storelog_replay_all();
 }
 
-static int
-cyon_storelog_replay(void)
+static void
+cyon_storelog_replay_all(void)
 {
-	u_int8_t		ch;
-	struct stat		st;
-	u_int8_t		*buf;
-	long			offset;
-	u_int64_t		len, olen;
-	u_int8_t		*key, *data;
-	struct store_log	slog, *plog;
-	u_int64_t		added, removed;
-	char			fpath[MAXPATHLEN], *hex;
-	u_char			hash[SHA_DIGEST_LENGTH];
+	char		*hex;
 
-	cyon_sha_hex(store_state, &hex);
-	snprintf(fpath, sizeof(fpath),
-	    CYON_LOG_FILE, storepath, storename, hex);
-	cyon_mem_free(hex);
-
-	if ((lfd = open(fpath, O_RDONLY)) == -1) {
-		if (errno == ENOENT)
-			return (CYON_RESULT_ERROR);
-
-		fatal("open(%s): %s", fpath, errno_s);
-	}
-
-	if (fstat(lfd, &st) == -1)
-		fatal("fstat(): %s", errno_s);
-
-	if (st.st_size == 0) {
-		close(lfd);
-		return (CYON_RESULT_ERROR);
-	}
-
-	olen = 0;
-	buf = NULL;
-	offset = 0;
-	replaying_log = 1;
-	added = removed = 0;
-
-	cyon_log(LOG_NOTICE, "replaying log %s", fpath);
 	for (;;) {
-		while (offset < st.st_size) {
-			cyon_atomic_read(lfd, &ch, 1, NULL, 0);
-			offset++;
-
-			if (ch != store_log_magic[0])
-				continue;
-
-			if ((long)(offset + sizeof(slog) - 1) >= st.st_size)
-				break;
-
-			cyon_atomic_read(lfd, &slog.magic[1],
-			    sizeof(slog) - 1, NULL, 0);
-			offset += sizeof(slog) - 1;
-
-			slog.magic[0] = ch;
-			if (!memcmp(slog.magic, store_log_magic, 4))
-				break;
-		}
-
-		if (offset >= st.st_size)
-			break;
-
-		if ((offset + slog.dlen + slog.klen) > st.st_size) {
-			store_errors++;
-			cyon_log(LOG_NOTICE,
-			    "LOG CORRUPTED, would read past at %ld", offset);
-			continue;
-		}
-
-		len = slog.klen + slog.dlen + sizeof(slog);
-		if (len > olen) {
-			if (buf != NULL)
-				cyon_mem_free(buf);
-			buf = cyon_malloc(len);
-		}
-
-		olen = len;
-		memcpy(buf, &slog, sizeof(slog));
-		cyon_atomic_read(lfd, buf + sizeof(slog),
-		    len - sizeof(slog), NULL, 0);
-		offset += slog.klen + slog.dlen;
-
-		plog = (struct store_log *)buf;
-		memcpy(hash, plog->hash, SHA_DIGEST_LENGTH);
-		memset(plog->hash, '\0', SHA_DIGEST_LENGTH);
-
-		SHA_Init(&shactx);
-		SHA_Update(&shactx, buf, len);
-		SHA_Final(plog->hash, &shactx);
-
-		if (memcmp(hash, plog->hash, SHA_DIGEST_LENGTH)) {
-			store_errors++;
-			cyon_log(LOG_NOTICE,
-			    "INCORRECT CHECKSUM for log @ %ld, skipping",
-			    offset);
-			continue;
-		}
-
-		key = buf + sizeof(slog);
-		if (slog.dlen > 0)
-			data = buf + sizeof(slog) + slog.klen;
-		else
-			data = NULL;
-
-		if (rnode == NULL) {
-			rnode = cyon_malloc(sizeof(struct node));
-			memset(rnode, 0, sizeof(struct node));
-		}
-
-		store_modified = 1;
-
-		switch (slog.op) {
-		case CYON_OP_SETAUTH:
-			if (slog.klen != SHA256_DIGEST_LENGTH) {
-				cyon_log(LOG_NOTICE,
-				    "replay of setauth log entry failed");
-				break;
-			}
-
-			if (store_passphrase != NULL)
-				cyon_mem_free(store_passphrase);
-			store_passphrase = cyon_malloc(slog.klen);
-			memcpy(store_passphrase, key, slog.klen);
-			break;
-		case CYON_OP_PUT:
-			if (!cyon_store_put(key, slog.klen,
-			    data, slog.dlen, slog.flags))
-				fatal("replay of log failed at this stage?");
-			added++;
-			break;
-		case CYON_OP_DEL:
-			if (!cyon_store_del(key, slog.klen))
-				fatal("replay of log failed at this stage?");
-			removed++;
-			break;
-		case CYON_OP_REPLACE:
-			if (!cyon_store_replace(key,
-			    slog.klen, data, slog.dlen))
-				fatal("replay of log failed at this stage?");
-			break;
-		case CYON_OP_DISK_DATA:
-			if (!cyon_diskstore_create(key,
-			    slog.klen, data, slog.dlen)) {
-				cyon_log(LOG_NOTICE, "disk data with no node");
-				store_errors++;
-			}
-			break;
-		default:
-			printf("unknown log operation %d", slog.op);
-			break;
-		}
-	}
-
-	if (buf != NULL)
-		cyon_mem_free(buf);
-
-	if (store_errors) {
-		cyon_log(LOG_NOTICE, "LOG REPLAY *FAILED*, SEE ERRORS ABOVE");
-	} else {
-		cyon_log(LOG_NOTICE,
-		    "store replay completed: %ld added, %ld removed",
-		    added, removed);
-	}
-
-	close(lfd);
-	replaying_log = 0;
-
-	if (!store_errors && store_retain_logs) {
-		cyon_store_current_state(store_state);
 		cyon_sha_hex(store_state, &hex);
-		cyon_log(LOG_NOTICE, "store state is %s", hex);
-	}
+		if (!cyon_storelog_replay(hex, CYON_REPLAY_STARTUP)) {
+			cyon_mem_free(hex);
+			break;
+		}
 
-	return ((store_errors) ? CYON_RESULT_ERROR : CYON_RESULT_OK);
+		cyon_mem_free(hex);
+	}
 }
 
 static void

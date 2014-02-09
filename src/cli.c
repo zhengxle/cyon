@@ -39,6 +39,7 @@ void		cyon_disconnect(void);
 void		fatal(const char *, ...);
 void		cyon_ssl_write(void *, u_int32_t);
 void		cyon_ssl_read(void *, u_int32_t);
+
 int		cyon_del(u_int8_t *, u_int32_t);
 int		cyon_getkeys(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);
 int		cyon_get(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);
@@ -53,6 +54,7 @@ void		cyon_cli_stats(u_int8_t, char **);
 void		cyon_cli_write(u_int8_t, char **);
 void		cyon_cli_setauth(u_int8_t, char **);
 void		cyon_cli_getkeys(u_int8_t, char **);
+void		cyon_cli_replay(u_int8_t, char **);
 
 int		quit = 0;
 int		cfd = -1;
@@ -74,6 +76,7 @@ struct {
 	{ "replace",		cyon_cli_upload },
 	{ "getkeys",		cyon_cli_getkeys },
 	{ "makelink",		cyon_cli_upload },
+	{ "replay",		cyon_cli_replay },
 	{ NULL,		NULL },
 };
 
@@ -653,4 +656,36 @@ cyon_cli_setauth(u_int8_t argc, char **argv)
 		printf("Passphrase was successfully set.\n");
 	else
 		printf("Error while setting the passphrase.\n");
+}
+
+void
+cyon_cli_replay(u_int8_t argc, char **argv)
+{
+	u_int8_t		*p;
+	u_int32_t		len;
+	struct cyon_op		*op, ret;
+
+	if (argc != 2) {
+		printf("Usage: replay [state]\n");
+		return;
+	}
+
+	len = sizeof(struct cyon_op) + SHA_DIGEST_STRING_LEN;
+	if ((p = malloc(len)) == NULL)
+		fatal("malloc(): %s", errno_s);
+
+	op = (struct cyon_op *)p;
+	op->op = CYON_OP_REPLAY;
+	net_write32((u_int8_t *)&(op->length), SHA_DIGEST_STRING_LEN);
+	memcpy(p + sizeof(struct cyon_op), argv[1], strlen(argv[1]));
+
+	cyon_ssl_write(p, len);
+	free(p);
+
+	memset(&ret, 0, sizeof(ret));
+	cyon_ssl_read(&ret, sizeof(struct cyon_op));
+	if (ret.op == CYON_OP_RESULT_OK)
+		printf("The log was applied successfully, see messages\n");
+	else
+		printf("Error while applying the log, see messages\n");
 }

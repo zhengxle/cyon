@@ -43,6 +43,7 @@
 #define CYON_OP_REPLACE		8
 #define CYON_OP_GETKEYS		9
 #define CYON_OP_MAKELINK	10
+#define CYON_OP_REPLAY		11
 #define CYON_OP_RESULT_OK	200
 #define CYON_OP_RESULT_ERROR	201
 
@@ -95,6 +96,9 @@ void		fatal(const char *, ...);
 
 #define CYON_NO_CHECKSUM		0
 #define CYON_ADD_CHECKSUM		1
+
+#define CYON_REPLAY_STARTUP		0
+#define CYON_REPLAY_REQUEST		1
 
 #define CYON_STORE_WRITE_NOFORK		0
 #define CYON_STORE_WRITE_FORK		1
@@ -250,6 +254,7 @@ void		cyon_log_init(void);
 void		cyon_store_flush(int);
 void		cyon_storelog_reopen(int);
 void		cyon_storewrite_start(void);
+int		cyon_storelog_replay(char *, int);
 void		cyon_log(int, const char *, ...);
 void		cyon_strlcpy(char *, const char *, size_t);
 void		cyon_debug_internal(char *, int, const char *, ...);
