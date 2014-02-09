@@ -575,8 +575,10 @@ cyon_store_write(void)
 	u_char			hash[SHA_DIGEST_LENGTH];
 	char			fpath[MAXPATHLEN], tpath[MAXPATHLEN];
 
-	if (rnode == NULL || store_modified == 0 || store_nopersist)
+	if (rnode == NULL || store_modified == 0 || store_nopersist) {
+		cyon_log(LOG_NOTICE, "store write issued, but nothing to do");
 		return (CYON_RESULT_OK);
+	}
 
 	cyon_store_lock(1);
 
