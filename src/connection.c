@@ -660,14 +660,18 @@ static void
 cyon_connection_recv_stats(struct connection *c)
 {
 	struct cyon_op		ret;
+	char			*hex;
 	struct cyon_stats	stats;
 
 	ret.op = CYON_OP_RESULT_OK;
 	net_write32((u_int8_t *)&(ret.length), sizeof(struct cyon_stats));
 
 	cyon_store_lock(0);
+	cyon_sha_hex(store_state, &hex);
 	stats.keycount = htobe64(key_count);
 	stats.meminuse = htobe64(meminuse);
+	memcpy(stats.state, hex, sizeof(stats.state));
+	cyon_mem_free(hex);
 	cyon_store_unlock();
 
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);

@@ -31,6 +31,7 @@
 #include <signal.h>
 #include <syslog.h>
 
+#define SHA_DIGEST_STRING_LEN	((SHA_DIGEST_LENGTH * 2) + 1)
 /* Shared server & cli stuff. */
 #define CYON_OP_PUT		1
 #define CYON_OP_GET		2
@@ -53,6 +54,7 @@ struct cyon_op {
 struct cyon_stats {
 	u_int64_t		meminuse;
 	u_int64_t		keycount;
+	u_int8_t		state[SHA_DIGEST_STRING_LEN];
 } __attribute__((__packed__));
 
 #define CYON_RESULT_ERROR	0
