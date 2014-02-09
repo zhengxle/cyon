@@ -1362,8 +1362,7 @@ cyon_diskstore_read(struct disknode *dn, u_int8_t **out, u_int32_t *len)
 		pthread_mutex_unlock(&disk_lock);
 		if (store_ds_offset != 0) {
 			cyon_log(LOG_NOTICE,
-			    "bad read on on disk data @ %ld: %s",
-			    dn->offset, errno_s);
+			    "bad read on on disk data @ %ld", dn->offset);
 		}
 		return (CYON_RESULT_ERROR);
 	}
