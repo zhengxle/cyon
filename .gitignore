@@ -1,2 +1,5 @@
 *.o
-cyon-*
+*.swp
+*.swo
+cyon-server*
+cyon-cmd*
