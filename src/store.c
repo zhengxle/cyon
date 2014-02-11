@@ -85,7 +85,7 @@ struct disknode {
 } __attribute__((__packed__));
 
 static void		cyon_store_map(void);
-static void		cyon_diskstore_open(int);
+static void		cyon_diskstore_open(void);
 static void		cyon_storelog_replay_all(void);
 static void		cyon_store_mapnode(int, struct node *);
 static struct node	*cyon_node_lookup(u_int8_t *, u_int32_t, u_int8_t);
@@ -110,8 +110,6 @@ u_char			*store_passphrase;
 u_int8_t		store_retain_logs;
 u_int8_t		store_state[SHA_DIGEST_LENGTH];
 
-pthread_key_t		dfd_read;
-
 static int		lfd;
 static int		dfd;
 static struct node	*rnode;
@@ -129,7 +127,6 @@ static u_int8_t		store_modified = 0;
 void
 cyon_store_init(void)
 {
-	int		r;
 	char		*hex;
 
 	lfd = -1;
@@ -146,12 +143,8 @@ cyon_store_init(void)
 	pthread_mutex_init(&disk_lock, NULL);
 	pthread_rwlock_init(&store_lock, NULL);
 
-	if ((r = pthread_key_create(&dfd_read, NULL)))
-		fatal("failed to create disk read key: %d", r);
-
 	if (store_mode == CYON_DISK_STORE)
-		cyon_diskstore_open(0);
-
+		cyon_diskstore_open();
 	cyon_store_map();
 
 	if (rnode == NULL) {
@@ -182,13 +175,6 @@ cyon_store_init(void)
 
 	if (cyon_readonly_mode)
 		cyon_log(LOG_NOTICE, "Cyon is in read-only mode");
-}
-
-void
-cyon_store_thread_init(void)
-{
-	if (store_mode == CYON_DISK_STORE)
-		cyon_diskstore_open(1);
 }
 
 void
@@ -1299,37 +1285,26 @@ next:
 }
 
 static void
-cyon_diskstore_open(int readonly)
+cyon_diskstore_open(void)
 {
 	struct stat	st;
-	int		flags, *fd, r;
+	int		flags;
 	char		fpath[MAXPATHLEN];
 
 	snprintf(fpath, sizeof(fpath), CYON_STORE_DSFILE, storepath, storename);
 
-	if (readonly) {
-		flags = O_RDONLY;
-	} else {
-		flags = O_CREAT | O_APPEND | O_RDWR;
-		if (store_always_sync)
-			flags |= O_SYNC;
-	}
+	flags = O_CREAT | O_APPEND | O_RDWR;
+	if (store_always_sync)
+		flags |= O_SYNC;
 
-	fd = cyon_malloc(sizeof(int));
-	*fd = open(fpath, flags, 0700);
-	if (*fd == -1)
+	dfd = open(fpath, flags, 0700);
+	if (dfd == -1)
 		fatal("could not open dsfile: %s", fpath);
-	if (fstat(*fd, &st) == -1)
+	if (fstat(dfd, &st) == -1)
 		fatal("fstat(dfd): %s", errno_s);
 
-	if (!readonly) {
-		dfd = *fd;
-		store_ds_offset = st.st_size;
-		cyon_mem_free(fd);
-	} else {
-		if ((r = pthread_setspecific(dfd_read, fd)))
-			fatal("pthread_setspecific dfd: %d", r);
-	}
+	store_ds_offset = st.st_size;
+	cyon_log(LOG_NOTICE, "disk store opened at %ld", store_ds_offset);
 }
 
 static struct disknode *
@@ -1378,7 +1353,6 @@ cyon_diskstore_write(u_int8_t *key, u_int32_t klen, u_int8_t *d, u_int32_t dlen)
 static int
 cyon_diskstore_read(struct disknode *dn, u_int8_t **out, u_int32_t *len)
 {
-	int			*fd;
 	SHA_CTX			sctx;
 	u_int32_t		blen;
 	struct disknode		*dnode;
@@ -1386,9 +1360,11 @@ cyon_diskstore_read(struct disknode *dn, u_int8_t **out, u_int32_t *len)
 
 	blen = sizeof(struct disknode) + dn->klen + dn->dlen;
 	buf = cyon_malloc(blen);
-	fd = THREAD_VAR(dfd_read);
 
-	if (lseek(*fd, dn->offset, SEEK_SET) == -1) {
+	pthread_mutex_lock(&disk_lock);
+	if (lseek(dfd, dn->offset, SEEK_SET) == -1) {
+		pthread_mutex_unlock(&disk_lock);
+
 		if (replaying_log)
 			return (CYON_RESULT_ERROR);
 
@@ -1399,7 +1375,8 @@ cyon_diskstore_read(struct disknode *dn, u_int8_t **out, u_int32_t *len)
 		return (CYON_RESULT_ERROR);
 	}
 
-	if (!cyon_atomic_read(*fd, buf, blen, NULL, 1)) {
+	if (!cyon_atomic_read(dfd, buf, blen, NULL, 1)) {
+		pthread_mutex_unlock(&disk_lock);
 		if (store_ds_offset != 0 && !replaying_log) {
 			cyon_readonly_mode = 1;
 			cyon_log(LOG_NOTICE,
@@ -1408,13 +1385,16 @@ cyon_diskstore_read(struct disknode *dn, u_int8_t **out, u_int32_t *len)
 		return (CYON_RESULT_ERROR);
 	}
 
-	if (lseek(*fd, store_ds_offset, SEEK_SET) == -1) {
+	if (lseek(dfd, store_ds_offset, SEEK_SET) == -1) {
+		pthread_mutex_unlock(&disk_lock);
 		cyon_readonly_mode = 1;
 		cyon_log(LOG_NOTICE,
 		    "bad read on disk data @ %ld: lseek() end %s",
 		    dn->offset, errno_s);
 		return (CYON_RESULT_ERROR);
 	}
+
+	pthread_mutex_unlock(&disk_lock);
 
 	dnode = (struct disknode *)buf;
 	memcpy(hash, dnode->hash, SHA_DIGEST_LENGTH);

@@ -44,7 +44,7 @@ cyon_threads_init(void)
 	struct thread		*t;
 
 	if ((r = pthread_key_create(&thread, NULL)))
-		fatal("pthread_key_create() failed %d", r);
+		fatal("pthread_key_create() failed %d");
 
 	ssl_mutexes = cyon_malloc(CRYPTO_num_locks() * sizeof(pthread_mutex_t));
 	for (i = 0; i < CRYPTO_num_locks(); i++)
@@ -124,8 +124,6 @@ cyon_thread_entry(void *arg)
 
 	net_init(&(t->nctx));
 	TAILQ_INIT(&(t->nctx.clients));
-
-	cyon_store_thread_init();
 	cyon_platform_event_init(&(t->nctx));
 
 	idle_check = now = cyon_time_ms();

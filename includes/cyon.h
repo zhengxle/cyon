@@ -290,7 +290,6 @@ void		cyon_threads_start(void);
 void		cyon_threads_stop(void);
 void		*cyon_thread_entry(void *);
 struct thread	*cyon_thread_getnext(void);
-void		cyon_store_thread_init(void);
 
 void		cyon_platform_event_init(struct netcontext *);
 void		cyon_platform_event_wait(struct netcontext *);
