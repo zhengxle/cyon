@@ -388,7 +388,12 @@ cyon_storewrite_wait(int final)
 	cyon_sha_hex(store_state, &old);
 
 	if (store_retain_logs) {
-		cyon_log(LOG_NOTICE, "state transition %s -> %s", old, hex);
+		if (memcmp(hash, store_state, SHA_DIGEST_LENGTH)) {
+			cyon_log(LOG_NOTICE,
+			    "state transition %s -> %s", old, hex);
+		} else {
+			cyon_log(LOG_NOTICE, "no store state changes");
+		}
 	} else {
 		snprintf(fpath, sizeof(fpath),
 		    CYON_LOG_FILE, storepath, storename, old);
