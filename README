@@ -20,8 +20,12 @@ key of the same length the operations are O(1).
 
 Cyon tries its best to keep memory overhead low.
 
-The CLI included is very basic and a bad representation of how a client
-library should be done. It's only there for debugging purposes.
+A quick and dirty cmd tool (cyon-cmd) is provided which can be used to
+talk to a cyon server:
+	# cyon-cli -s 127.0.0.1:3331 stats
+
+It is however very basic and a bad representation of how a client
+should be done. It's only there for debugging purposes.
 
 A client library for C exists, but is not part of this tree yet.
 
