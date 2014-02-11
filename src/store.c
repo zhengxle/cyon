@@ -940,14 +940,14 @@ cyon_storelog_replay(char *state, int when)
 		}
 	} else {
 		cyon_log(LOG_NOTICE,
-		    "store replay completed: %ld added, %ld removed",
+		    "log replay completed: %ld added, %ld removed",
 		    added, removed);
 	}
 
 	close(lfd);
 	replaying_log = 0;
 
-	if (!store_errors) {
+	if (!store_errors && store_retain_logs) {
 		cyon_store_current_state(store_state);
 		cyon_sha_hex(store_state, &hex);
 		cyon_log(LOG_NOTICE, "store state is %s", hex);
@@ -1446,7 +1446,20 @@ cyon_diskstore_create(u_int8_t *key, u_int32_t klen,
 	dn = (struct disknode *)(rp->region + sizeof(u_int32_t));
 	if (!cyon_diskstore_read(dn, &buf, &len)) {
 		ndn = cyon_diskstore_write(key, klen, data, dlen);
-		memcpy(dn, ndn, sizeof(struct disknode));
+
+		if (!cyon_readonly_mode) {
+			memcpy(dn, ndn, sizeof(struct disknode));
+			cyon_log(LOG_NOTICE, "recreated disk data for %.*s",
+			    key, klen);
+		} else {
+			if (dn->offset != ndn->offset) {
+				cyon_log(LOG_NOTICE,
+				    "dn->offset != ndn->offset (%ld, %ld)",
+				    dn->offset, ndn->offset);
+				store_errors++;
+			}
+		}
+
 		cyon_mem_free(ndn);
 	}
 
