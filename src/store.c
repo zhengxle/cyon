@@ -877,7 +877,8 @@ cyon_storelog_replay(char *state, int when)
 			memset(rnode, 0, sizeof(struct node));
 		}
 
-		store_modified = 1;
+		if (!cyon_readonly_mode)
+			store_modified = 1;
 
 		switch (slog.op) {
 		case CYON_OP_SETAUTH:
