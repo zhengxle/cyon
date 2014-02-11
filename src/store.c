@@ -609,6 +609,10 @@ cyon_store_write(void)
 		return (CYON_RESULT_OK);
 	}
 
+	/*
+	 * The write lock protects us from getting new entries in the log
+	 * so it is safe to reopen the logs after the fork.
+	 */
 	cyon_store_lock(1);
 
 	pid = fork();
@@ -626,6 +630,12 @@ cyon_store_write(void)
 		cyon_store_unlock();
 		cyon_log(LOG_NOTICE, "store write started (%d)", pid);
 		return (pid);
+	}
+
+	if (!cyon_readonly_mode) {
+		close(lfd);
+		if (store_mode == CYON_DISK_STORE)
+			close(dfd);
 	}
 
 	snprintf(fpath, sizeof(fpath), CYON_STORE_FILE, storepath, storename);
@@ -937,7 +947,7 @@ cyon_storelog_replay(char *state, int when)
 	close(lfd);
 	replaying_log = 0;
 
-	if (!store_errors && store_retain_logs) {
+	if (!store_errors) {
 		cyon_store_current_state(store_state);
 		cyon_sha_hex(store_state, &hex);
 		cyon_log(LOG_NOTICE, "store state is %s", hex);
@@ -1354,6 +1364,11 @@ cyon_diskstore_read(struct disknode *dn, u_int8_t **out, u_int32_t *len)
 	pthread_mutex_lock(&disk_lock);
 	if (lseek(dfd, dn->offset, SEEK_SET) == -1) {
 		pthread_mutex_unlock(&disk_lock);
+
+		if (replaying_log)
+			return (CYON_RESULT_ERROR);
+
+		cyon_readonly_mode = 1;
 		cyon_log(LOG_NOTICE,
 		    "bad read on on disk data @ %ld: lseek() offset %s",
 		    dn->offset, errno_s);
@@ -1362,7 +1377,8 @@ cyon_diskstore_read(struct disknode *dn, u_int8_t **out, u_int32_t *len)
 
 	if (!cyon_atomic_read(dfd, buf, blen, NULL, 1)) {
 		pthread_mutex_unlock(&disk_lock);
-		if (store_ds_offset != 0) {
+		if (store_ds_offset != 0 && !replaying_log) {
+			cyon_readonly_mode = 1;
 			cyon_log(LOG_NOTICE,
 			    "bad read on on disk data @ %ld", dn->offset);
 		}
@@ -1371,6 +1387,7 @@ cyon_diskstore_read(struct disknode *dn, u_int8_t **out, u_int32_t *len)
 
 	if (lseek(dfd, store_ds_offset, SEEK_SET) == -1) {
 		pthread_mutex_unlock(&disk_lock);
+		cyon_readonly_mode = 1;
 		cyon_log(LOG_NOTICE,
 		    "bad read on disk data @ %ld: lseek() end %s",
 		    dn->offset, errno_s);
@@ -1431,7 +1448,6 @@ cyon_diskstore_create(u_int8_t *key, u_int32_t klen,
 		ndn = cyon_diskstore_write(key, klen, data, dlen);
 		memcpy(dn, ndn, sizeof(struct disknode));
 		cyon_mem_free(ndn);
-		cyon_log(LOG_NOTICE, "recreated data for %.*s", klen, key);
 	}
 
 	return (CYON_RESULT_OK);
