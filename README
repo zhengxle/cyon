@@ -12,17 +12,17 @@ When Cyon writes its full data store to disk it is completely non blocking
 and it recycles the log file after the data store is verified.
 
 Cyon can also run as read-only slaves, or as non-persistent database where
-it will not commit anything to disk.
+it will not commit anything to disk. Slaves should be started with the -x flag.
+
+See the scripts/cyon-sync.sh for an example of how a sync can be performed.
 
 Cyon stores its data/index using a form of lookup-table, with all operations
 being bound to the length of the key. However Cyon guarantees that for each
 key of the same length the operations are O(1).
 
-Cyon tries its best to keep memory overhead low.
-
 A quick and dirty cmd tool (cyon-cmd) is provided which can be used to
 talk to a cyon server:
-	# cyon-cli -s 127.0.0.1:3331 stats
+	# cyon-cmd -s 127.0.0.1:3331 stats
 
 It is however very basic and a bad representation of how a client
 should be done. It's only there for debugging purposes.
