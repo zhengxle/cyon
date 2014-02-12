@@ -495,10 +495,8 @@ cyon_cli_getkeys(u_int8_t argc, char **argv)
 		dlen = net_read32(p);
 		p += sizeof(u_int32_t);
 
-		if (argc == 3) {
-			printf("%.*s", dlen, p);
+		if (argc == 3)
 			printf("%.*s -> %d bytes\n", klen, key, dlen);
-		}
 
 		p += dlen;
 		i++;
