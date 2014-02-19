@@ -1247,7 +1247,7 @@ cyon_traverse_node(struct getkeys_ctx *ctx, struct connection *c,
 				    sizeof(u_int32_t), len, CYON_RESOLVE_LINK);
 				if (wp == NULL ||
 				    !(wp->flags & NODE_FLAG_HASDATA))
-					wp = NULL;
+					goto next;
 
 				len = *(u_int32_t *)wp->region;
 				data = wp->region + sizeof(u_int32_t);
