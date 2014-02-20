@@ -52,10 +52,10 @@
 	} while (0)
 
 struct node {
+	u_int8_t	*region;
 	u_int8_t	rbase;
 	u_int8_t	rtop;
 	u_int8_t	flags;
-	u_int8_t	*region;
 } __attribute__((__packed__));
 
 struct store_header {
