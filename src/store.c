@@ -526,14 +526,21 @@ cyon_store_flush(int what)
 	if (cyon_readonly_mode || store_nopersist)
 		return;
 
-	if (what == CYON_STOREFLUSH_LOG) {
+	switch (what) {
+	case CYON_STOREFLUSH_LOG:
 		if (log_modified == 0)
 			return;
 		fd = lfd;
-	} else if (what == CYON_STOREFLUSH_DISK) {
+		break;
+	case CYON_STOREFLUSH_DISK:
 		if (disk_modified == 0)
 			return;
 		fd = dfd;
+		break;
+	default:
+		cyon_log(LOG_WARNING,
+		    "what unspecified in cyon_store_flush: %d", what);
+		return;
 	}
 
 	for (;;) {
