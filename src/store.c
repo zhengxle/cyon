@@ -178,26 +178,26 @@ cyon_store_init(void)
 }
 
 void
-cyon_store_lock(int write)
+cyon_store_lock(int wr)
 {
-	int		r, err;
+	int		r, i;
 	int		(*lock)(pthread_rwlock_t *);
 
-	if (write)
+	if (wr)
 		lock = pthread_rwlock_wrlock;
 	else
 		lock = pthread_rwlock_rdlock;
 
-	err = 0;
+	i = 0;
 	for (;;) {
 		if ((r = lock(&store_lock)) == 0)
 			break;
 
 		cyon_log(LOG_NOTICE,
-		    "cyon_store_lock(%d) err nr#%d: %d", write, err++, r);
+		    "cyon_store_lock(%d) err nr#%d: %d", wr, i++, r);
 
-		if (err == 5)
-			fatal("cyon_store_lock(%d) completely failed", write);
+		if (i == 5)
+			fatal("cyon_store_lock(%d) completely failed", wr);
 	}
 }
 
