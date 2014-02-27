@@ -43,7 +43,8 @@
 
 #define NODE_REGION_OFFSET(o, p)					\
 	do {								\
-		o = sizeof(u_int32_t) + *(u_int32_t *)p;		\
+		struct node_data *_nd = (struct node_data *)p;		\
+		o = sizeof(struct node_data) + _nd->size;		\
 	} while (0)
 
 #define NODE_REGION_RANGE(r, p)						\
@@ -56,6 +57,10 @@ struct node {
 	u_int8_t	rbase;
 	u_int8_t	rtop;
 	u_int8_t	flags;
+} __attribute__((__packed__));
+
+struct node_data {
+	u_int32_t	size;
 } __attribute__((__packed__));
 
 struct store_header {
@@ -214,8 +219,8 @@ int
 cyon_store_get(u_int8_t *key, u_int32_t len, u_int8_t **out, u_int32_t *olen)
 {
 	struct node		*p;
+	struct node_data	*nd;
 	struct disknode		*dn;
-	u_int32_t		dlen;
 	int			resolve;
 
 	if (store_mode == CYON_DISK_STORE)
@@ -230,17 +235,17 @@ cyon_store_get(u_int8_t *key, u_int32_t len, u_int8_t **out, u_int32_t *olen)
 	if (!(p->flags & NODE_FLAG_HASDATA))
 		return (CYON_RESULT_ERROR);
 
+	nd = (struct node_data *)p->region;
 	if (store_mode == CYON_DISK_STORE) {
-		dlen = *(u_int32_t *)p->region;
-		if (dlen != sizeof(struct disknode))
-			fatal("dlen != sizeof(struct disknode)");
+		if (nd->size != sizeof(struct disknode))
+			fatal("nd->size != sizeof(struct disknode)");
 
-		dn = (struct disknode *)(p->region + sizeof(u_int32_t));
+		dn = (struct disknode *)(p->region + sizeof(struct node_data));
 		if (!cyon_diskstore_read(dn, out, olen))
 			return (CYON_RESULT_ERROR);
 	} else {
-		*olen = *(u_int32_t *)p->region;
-		*out = p->region + sizeof(u_int32_t);
+		*olen = nd->size;
+		*out = p->region + sizeof(struct node_data);
 	}
 
 	return (CYON_RESULT_OK);
@@ -313,6 +318,7 @@ int
 cyon_store_replace(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 {
 	struct node		*p;
+	struct node_data	*nd;
 	struct disknode		*dn;
 	u_int8_t		*old, *odata;
 	u_int32_t		nlen, rlen, offset, olen;
@@ -352,13 +358,15 @@ cyon_store_replace(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 		NODE_REGION_RANGE(rlen, p);
 	}
 
-	nlen = sizeof(u_int32_t) + dlen + rlen;
+	nlen = sizeof(struct node_data) + dlen + rlen;
 	p->region = cyon_malloc(nlen);
 
-	*(u_int32_t *)p->region = dlen;
-	memcpy(p->region + sizeof(u_int32_t), data, dlen);
+	nd = (struct node_data *)p->region;
+	nd->size = dlen;
+	memcpy(p->region + sizeof(struct node_data), data, dlen);
+
 	if (rlen != 0) {
-		memcpy(p->region + sizeof(u_int32_t) + dlen,
+		memcpy(p->region + sizeof(struct node_data) + dlen,
 		    old + offset, rlen);
 	}
 
@@ -370,6 +378,7 @@ int
 cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
     u_int32_t dlen, u_int32_t flags)
 {
+	struct node_data	*nd;
 	struct disknode		*dn;
 	struct node		*p, *lnode;
 	size_t			olen, rlen;
@@ -472,7 +481,7 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
 			if (lnode == NULL)
 				return (CYON_RESULT_ERROR);
 
-			data = lnode->region + sizeof(u_int32_t);
+			data = lnode->region + sizeof(struct node_data);
 			dlen = sizeof(struct disknode);
 		} else {
 			dn = cyon_diskstore_write(key, len, data, dlen);
@@ -500,13 +509,14 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
 	}
 
 	p->flags = NODE_FLAG_HASDATA | flags;
-	rlen += sizeof(u_int32_t);
+	rlen += sizeof(struct node_data);
 
 	p->region = cyon_malloc(rlen);
-	*(u_int32_t *)(p->region) = dlen;
+	nd = (struct node_data *)p->region;
+	nd->size = dlen;
 
-	offset = sizeof(u_int32_t) + dlen;
-	memcpy(p->region + sizeof(u_int32_t), data, dlen);
+	offset = sizeof(struct node_data) + dlen;
+	memcpy(p->region + sizeof(struct node_data), data, dlen);
 
 	if (old != NULL) {
 		memcpy(p->region + offset, old, olen);
@@ -1107,6 +1117,7 @@ cyon_storelog_replay_all(void)
 static void
 cyon_store_mapnode(int fd, struct node *p)
 {
+	struct node_data	nd;
 	struct node		*np;
 	struct disknode		*dn;
 	char			*hex;
@@ -1123,24 +1134,23 @@ cyon_store_mapnode(int fd, struct node *p)
 	if (p->flags & NODE_FLAG_HASDATA) {
 		key_count++;
 
-		cyon_atomic_read(fd, &offset,
-		    sizeof(u_int32_t), &shactx, 0);
+		cyon_atomic_read(fd, &nd, sizeof(nd), &shactx, 0);
 		if (p->rbase != 0 && p->rtop != 0) {
 			NODE_REGION_RANGE(rlen, p);
-			rlen += sizeof(u_int32_t) + offset;
+			rlen += sizeof(struct node_data) + nd.size;
 		} else {
-			rlen = sizeof(u_int32_t) + offset;
+			rlen = sizeof(struct node_data) + nd.size;
 		}
 
 		p->region = cyon_malloc(rlen);
-		*(u_int32_t *)p->region = offset;
-		cyon_atomic_read(fd, p->region + sizeof(u_int32_t),
-		    rlen - sizeof(u_int32_t), &shactx, 0);
-		offset = offset + sizeof(u_int32_t);
+		memcpy(p->region, &nd, sizeof(nd));
+		cyon_atomic_read(fd, p->region + sizeof(struct node_data),
+		    rlen - sizeof(struct node_data), &shactx, 0);
+		offset = nd.size + sizeof(struct node_data);
 
 		/* Verify the disk node data by issuing a read. */
 		if (store_mode == CYON_DISK_STORE) {
-			dn = (struct disknode *)(p->region + sizeof(u_int32_t));
+			dn = (struct disknode *)(p->region + sizeof(nd));
 			if (cyon_diskstore_read(dn, &data, &len)) {
 				cyon_mem_free(data);
 			} else {
@@ -1175,10 +1185,11 @@ cyon_store_mapnode(int fd, struct node *p)
 static struct node *
 cyon_node_lookup(u_int8_t *key, u_int32_t len, u_int8_t resolve)
 {
-	u_int32_t	i;
-	u_int8_t	idx;
-	u_int32_t	rlen;
-	struct node	*p, *l;
+	u_int32_t		i;
+	struct node_data	*nd;
+	u_int8_t		idx;
+	u_int32_t		rlen;
+	struct node		*p, *l;
 
 	if (len > CYON_KEY_MAX) {
 		cyon_log(LOG_NOTICE, "Attempt to lookup key > CYON_KEY_MAX");
@@ -1204,9 +1215,9 @@ cyon_node_lookup(u_int8_t *key, u_int32_t len, u_int8_t resolve)
 	}
 
 	if (resolve == CYON_RESOLVE_LINK && (p->flags & NODE_FLAG_ISLINK)) {
-		rlen = *(u_int32_t *)p->region;
-		l = cyon_node_lookup(p->region + sizeof(u_int32_t),
-		    rlen, CYON_RESOLVE_LINK);
+		nd = (struct node_data *)p->region;
+		l = cyon_node_lookup(p->region + sizeof(struct node_data),
+		    nd->size, CYON_RESOLVE_LINK);
 
 		if (l == NULL || !(l->flags & NODE_FLAG_HASDATA)) {
 			/* XXX - Should we do anything? */
@@ -1223,42 +1234,45 @@ cyon_traverse_node(struct getkeys_ctx *ctx, struct connection *c,
     struct node *rp)
 {
 	struct disknode		*dn;
+	struct node_data	*nd;
 	u_int16_t		klen;
 	struct node		*p, *wp;
 	u_int8_t		i, *data;
-	u_int32_t		rlen, len, nlen;
+	u_int32_t		rlen, nlen, len;
 
 	if (rp->region == NULL)
 		return;
 
 	if (rp->flags & NODE_FLAG_HASDATA) {
 		wp = rp;
-		len = *(u_int32_t *)rp->region;
-		rlen = sizeof(u_int32_t) + len;
-		data = rp->region + sizeof(u_int32_t);
+		nd = (struct node_data *)rp->region;
+		rlen = sizeof(struct node_data) + nd->size;
+		data = rp->region + sizeof(struct node_data);
 
 		if (store_mode == CYON_DISK_STORE) {
-			len = *(u_int32_t *)rp->region;
-			if (len != sizeof(struct disknode))
-				fatal("dlen != sizeof(struct disknode)");
+			if (nd->size != sizeof(struct disknode))
+				fatal("len != sizeof(struct disknode)");
 
-			dn = (struct disknode *)(rp->region + sizeof(len));
+			dn = (struct disknode *)(rp->region +
+			    sizeof(struct node_data));
 			if (!cyon_diskstore_read(dn, &data, &len))
 				goto next;
 		} else {
 			if (rp->flags & NODE_FLAG_ISLINK) {
-				len = *(u_int32_t *)rp->region;
-				rlen = sizeof(u_int32_t) + len;
-
+				rlen = sizeof(struct node_data) + nd->size;
 				wp = cyon_node_lookup(rp->region +
-				    sizeof(u_int32_t), len, CYON_RESOLVE_LINK);
+				    sizeof(struct node_data), nd->size,
+				    CYON_RESOLVE_LINK);
+
 				if (wp == NULL ||
 				    !(wp->flags & NODE_FLAG_HASDATA))
 					goto next;
 
-				len = *(u_int32_t *)wp->region;
-				data = wp->region + sizeof(u_int32_t);
+				nd = (struct node_data *)wp->region;
+				data = wp->region + sizeof(struct node_data);
 			}
+
+			len = nd->size;
 		}
 
 		net_write32((u_int8_t *)&nlen, len);
@@ -1435,6 +1449,7 @@ static int
 cyon_diskstore_create(u_int8_t *key, u_int32_t klen,
     u_int8_t *data, u_int32_t dlen)
 {
+	struct node_data	*nd;
 	struct node		*rp;
 	u_int32_t		len;
 	u_int8_t		*buf;
@@ -1446,11 +1461,11 @@ cyon_diskstore_create(u_int8_t *key, u_int32_t klen,
 	if (!(rp->flags & NODE_FLAG_HASDATA))
 		return (CYON_RESULT_ERROR);
 
-	len = *(u_int32_t *)rp->region;
-	if (len != sizeof(struct disknode))
+	nd = (struct node_data *)rp->region;
+	if (nd->size != sizeof(struct disknode))
 		return (CYON_RESULT_ERROR);
 
-	dn = (struct disknode *)(rp->region + sizeof(u_int32_t));
+	dn = (struct disknode *)(rp->region + sizeof(struct node_data));
 	if (!cyon_diskstore_read(dn, &buf, &len)) {
 		ndn = cyon_diskstore_write(key, klen, data, dlen);
 
