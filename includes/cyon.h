@@ -56,6 +56,7 @@ struct cyon_stats {
 	u_int64_t		meminuse;
 	u_int64_t		keycount;
 	u_int8_t		state[SHA_DIGEST_STRING_LEN];
+	u_int8_t		modified;
 } __attribute__((__packed__));
 
 #define CYON_RESULT_ERROR	0
@@ -243,6 +244,7 @@ extern u_int8_t			store_mode;
 extern u_int8_t			store_retain_logs;
 extern u_int8_t			store_nopersist;
 extern u_int8_t			server_started;
+extern u_int8_t			store_modified;
 extern u_int8_t			store_always_sync;
 extern u_int8_t			cyon_readonly_mode;
 extern u_int8_t			signaled_store_write;

@@ -113,6 +113,7 @@ u_int8_t		store_mode;
 u_int8_t		store_nopersist;
 u_char			*store_passphrase;
 u_int8_t		store_retain_logs;
+u_int8_t		store_modified = 0;
 u_int8_t		store_state[SHA_DIGEST_LENGTH];
 
 static int		lfd;
@@ -127,7 +128,6 @@ static u_int64_t	store_log_offset;
 static u_int8_t		replaying_log = 0;
 static u_int8_t		log_modified = 0;
 static u_int8_t		disk_modified = 0;
-static u_int8_t		store_modified = 0;
 
 void
 cyon_store_init(void)

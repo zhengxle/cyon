@@ -558,7 +558,8 @@ cyon_cli_stats(u_int8_t argc, char **argv)
 
 	printf("Memory in use:    %" PRIu64 " bytes\n", stats.meminuse);
 	printf("Keys in store:    %" PRIu64 " keys\n", stats.keycount);
-	printf("Current state:    %s\n", stats.state);
+	printf("Current state:    %s %s\n", stats.state,
+	    (stats.modified) ? "[*]" : "");
 }
 
 void

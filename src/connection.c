@@ -670,8 +670,9 @@ cyon_connection_recv_stats(struct connection *c)
 
 	cyon_store_lock(0);
 	cyon_sha_hex(store_state, &hex);
-	stats.keycount = htobe64(key_count);
+	stats.modified = store_modified;
 	stats.meminuse = htobe64(meminuse);
+	stats.keycount = htobe64(key_count);
 	memcpy(stats.state, hex, sizeof(stats.state));
 	cyon_mem_free(hex);
 	cyon_store_unlock();
