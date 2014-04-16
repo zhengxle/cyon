@@ -29,6 +29,8 @@
 
 static void		usage(void);
 static void		cyon_signal(int);
+static void		cyon_write_pid(void);
+static void		cyon_unlink_pid(void);
 static void		cyon_storewrite_wait(int);
 static void		cyon_ssl_init(char *, char *);
 static void		cyon_server_bind(struct listener *, char *, u_int16_t);
@@ -183,7 +185,9 @@ main(int argc, char *argv[])
 	if (foreground == 0 && daemon(1, 1) == -1)
 		fatal("could not forkify(): %s", errno_s);
 
+	cyon_write_pid();
 	cyon_store_init();
+
 	signaled_store_write = 0;
 	pthread_mutex_init(&store_write_lock, NULL);
 
@@ -253,6 +257,7 @@ main(int argc, char *argv[])
 
 	cyon_storewrite_start();
 	cyon_storewrite_wait(1);
+	cyon_unlink_pid();
 
 	cyon_log(LOG_NOTICE, "server stopped");
 
@@ -443,4 +448,30 @@ usage(void)
 	}
 
 	exit(1);
+}
+
+static void
+cyon_write_pid(void)
+{
+	FILE		*fp;
+	char		fpath[MAXPATHLEN];
+
+	snprintf(fpath, sizeof(fpath), "%s/cyon.pid", storepath);
+
+	if ((fp = fopen(fpath, "w")) == NULL) {
+		cyon_log(LOG_NOTICE, "failed to write pidfile: %s", errno_s);
+	} else {
+		fprintf(fp, "%d\n", getpid());
+		fclose(fp);
+	}
+}
+
+static void
+cyon_unlink_pid(void)
+{
+	char		fpath[MAXPATHLEN];
+
+	snprintf(fpath, sizeof(fpath), "%s/cyon.pid", storepath);
+	if (unlink(fpath) == -1)
+		cyon_log(LOG_NOTICE, "pid file lingers: %s", errno_s);
 }
