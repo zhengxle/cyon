@@ -2,6 +2,7 @@
 
 CC=gcc
 INSTALL_DIR=/usr/local/bin
+INCLUDE_DIR=/usr/local/include/cyon
 
 S_SRC=	src/cyon.c src/connection.c src/net.c src/mem.c \
 	src/shared.c src/store.c src/utils.c src/linux.c src/pool.c \
@@ -34,12 +35,15 @@ generic: $(OBJS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 install: cyon-server cyon-cmd
+	mkdir -p $(INCLUDE_DIR)
 	install -m 555 cyon-server $(INSTALL_DIR)/cyon-server
 	install -m 555 cyon-cmd $(INSTALL_DIR)/cyon-cmd
+	install -m 644 includes/*.h $(INCLUDE_DIR)
 
 uninstall:
 	rm -f $(INSTALL_DIR)/cyon-server
 	rm -f $(INSTALL_DIR)/cyon-cmd
+	rm -rf $(INCLUDE_DIR)
 
 clean:
 	rm -f src/*.o cyon-server cyon-cmd
