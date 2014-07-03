@@ -1,6 +1,7 @@
 # Cyon Makefile
 
 CC=gcc
+INSTALL_DIR=/usr/local/bin
 
 S_SRC=	src/cyon.c src/connection.c src/net.c src/mem.c \
 	src/shared.c src/store.c src/utils.c src/linux.c src/pool.c \
@@ -31,6 +32,14 @@ generic: $(OBJS)
 
 .c.o: $<
 	$(CC) $(CFLAGS) -c $< -o $@
+
+install: cyon-server cyon-cmd
+	install -m 555 cyon-server $(INSTALL_DIR)/cyon-server
+	install -m 555 cyon-cmd $(INSTALL_DIR)/cyon-cmd
+
+uninstall:
+	rm -f $(INSTALL_DIR)/cyon-server
+	rm -f $(INSTALL_DIR)/cyon-cmd
 
 clean:
 	rm -f src/*.o cyon-server cyon-cmd
