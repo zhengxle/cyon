@@ -29,7 +29,7 @@ cyon-cmd: $(C_SRC)
 	@BIN="cyon-cmd" OBJS="$(C_OBJS)" make generic
 
 generic: $(OBJS)
-	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) -o $(BIN)
+	$(CC) $(CFLAGS) $(OBJS) -o $(BIN) $(LDFLAGS)
 
 .c.o: $<
 	$(CC) $(CFLAGS) -c $< -o $@
