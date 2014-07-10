@@ -36,7 +36,8 @@ void
 cyon_platform_event_wait(struct netcontext *nctx)
 {
 	struct connection	*c;
-	int			n, i, *fd;
+	struct listener		*l;
+	int			n, i, type;
 
 	n = epoll_wait(nctx->efd, nctx->events, EVENT_COUNT, 100);
 	if (n == -1) {
@@ -49,11 +50,11 @@ cyon_platform_event_wait(struct netcontext *nctx)
 		cyon_debug("%d sockets available", n);
 
 	for (i = 0; i < n; i++) {
-		fd = (int *)nctx->events[i].data.ptr;
+		type = *(int *)nctx->events[i].data.ptr;
 
 		if (nctx->events[i].events & EPOLLERR ||
 		    nctx->events[i].events & EPOLLHUP) {
-			if (*fd == server.fd)
+			if (type != EVENT_TYPE_CONNECTION)
 				fatal("error on server socket");
 
 			c = (struct connection *)nctx->events[i].data.ptr;
@@ -61,8 +62,9 @@ cyon_platform_event_wait(struct netcontext *nctx)
 			continue;
 		}
 
-		if (*fd == server.fd) {
-			cyon_connection_accept(&server);
+		if (type != EVENT_TYPE_CONNECTION) {
+			l = (struct listener *)nctx->events[i].data.ptr;
+			cyon_connection_accept(l);
 		} else {
 			c = (struct connection *)nctx->events[i].data.ptr;
 			if (nctx->events[i].events & EPOLLIN)

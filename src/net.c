@@ -16,7 +16,14 @@
 
 #include <sys/param.h>
 
+#include <unistd.h>
+
 #include "cyon.h"
+
+static int		net_send(struct connection *);
+static int		net_recv(struct connection *);
+static int		net_check(struct connection *, int);
+static int		net_ssl_check(struct connection *, int, int);
 
 void
 net_init(struct netcontext *nctx)
@@ -130,6 +137,34 @@ net_recv_expand(struct connection *c, struct netbuf *nb, size_t len,
 }
 
 int
+net_send_flush(struct connection *c)
+{
+	cyon_debug("net_send_flush(%p)", c);
+
+	while (!TAILQ_EMPTY(&(c->send_queue)) &&
+	    (c->flags & CONN_WRITE_POSSIBLE)) {
+		if (!net_send(c))
+			return (CYON_RESULT_ERROR);
+	}
+
+	return (CYON_RESULT_OK);
+}
+
+int
+net_recv_flush(struct connection *c)
+{
+	cyon_debug("net_recv_flush(%p)", c);
+
+	while (!TAILQ_EMPTY(&(c->recv_queue)) &&
+	    (c->flags & CONN_READ_POSSIBLE)) {
+		if (!net_recv(c))
+			return (CYON_RESULT_ERROR);
+	}
+
+	return (CYON_RESULT_OK);
+}
+
+static int
 net_send(struct connection *c)
 {
 	int			r;
@@ -142,23 +177,32 @@ net_send(struct connection *c)
 		if (nb->b_len != 0) {
 			len = MIN(NETBUF_SEND_PAYLOAD_MAX,
 			    nb->b_len - nb->s_off);
-			r = SSL_write(c->ssl, (nb->buf + nb->s_off), len);
+
+			switch (c->l->type) {
+			case EVENT_TYPE_INET_SOCKET:
+				r = SSL_write(c->ssl,
+				    (nb->buf + nb->s_off), len);
+				break;
+			case EVENT_TYPE_UNIX_SOCKET:
+				r = write(c->fd, (nb->buf + nb->s_off), len);
+				break;
+			}
 
 			cyon_debug("net_send(%d/%d bytes), progress with %d",
 			    nb->s_off, nb->b_len, r);
 
-			if (r <= 0) {
-				r = SSL_get_error(c->ssl, r);
-				switch (r) {
-				case SSL_ERROR_WANT_READ:
-				case SSL_ERROR_WANT_WRITE:
-					c->flags &= ~CONN_WRITE_POSSIBLE;
-					return (CYON_RESULT_OK);
-				default:
-					cyon_debug("SSL_write(): %s",
-					    ssl_errno_s);
+			if (r <= 0 && c->l->type == EVENT_TYPE_INET_SOCKET) {
+				if (!net_ssl_check(c, r, CONN_WRITE_POSSIBLE))
 					return (CYON_RESULT_ERROR);
-				}
+				if (!(c->flags & CONN_WRITE_POSSIBLE))
+					return (CYON_RESULT_OK);
+			}
+
+			if (r == -1 && c->l->type == EVENT_TYPE_UNIX_SOCKET) {
+				if (!net_check(c, CONN_WRITE_POSSIBLE))
+					return (CYON_RESULT_ERROR);
+				if (!(c->flags & CONN_WRITE_POSSIBLE))
+					return (CYON_RESULT_OK);
 			}
 
 			nb->s_off += (size_t)r;
@@ -175,21 +219,7 @@ net_send(struct connection *c)
 	return (CYON_RESULT_OK);
 }
 
-int
-net_send_flush(struct connection *c)
-{
-	cyon_debug("net_send_flush(%p)", c);
-
-	while (!TAILQ_EMPTY(&(c->send_queue)) &&
-	    (c->flags & CONN_WRITE_POSSIBLE)) {
-		if (!net_send(c))
-			return (CYON_RESULT_ERROR);
-	}
-
-	return (CYON_RESULT_OK);
-}
-
-int
+static int
 net_recv(struct connection *c)
 {
 	int			r;
@@ -204,23 +234,33 @@ net_recv(struct connection *c)
 		}
 
 again:
-		r = SSL_read(c->ssl,
-		    (nb->buf + nb->s_off), (nb->b_len - nb->s_off));
+		switch (c->l->type) {
+		case EVENT_TYPE_INET_SOCKET:
+			r = SSL_read(c->ssl,
+			    (nb->buf + nb->s_off), (nb->b_len - nb->s_off));
+			break;
+		case EVENT_TYPE_UNIX_SOCKET:
+			r = read(c->fd,
+			    (nb->buf + nb->s_off), (nb->b_len - nb->s_off));
+			break;
+		}
 
 		cyon_debug("net_recv(%ld/%ld bytes), progress with %d",
 		    nb->s_off, nb->b_len, r);
 
-		if (r <= 0) {
-			r = SSL_get_error(c->ssl, r);
-			switch (r) {
-			case SSL_ERROR_WANT_READ:
-			case SSL_ERROR_WANT_WRITE:
-				c->flags &= ~CONN_READ_POSSIBLE;
-				return (CYON_RESULT_OK);
-			default:
-				cyon_debug("SSL_read(): %s", ssl_errno_s);
+		if (r <= 0 && c->l->type == EVENT_TYPE_INET_SOCKET) {
+			if (!net_ssl_check(c, r, CONN_READ_POSSIBLE))
 				return (CYON_RESULT_ERROR);
-			}
+			if (!(c->flags & CONN_READ_POSSIBLE))
+				return (CYON_RESULT_OK);
+		}
+
+		if ((r == -1 || r == 0) &&
+		    c->l->type == EVENT_TYPE_UNIX_SOCKET) {
+			if (!net_check(c, CONN_READ_POSSIBLE))
+				return (CYON_RESULT_ERROR);
+			if (!(c->flags & CONN_READ_POSSIBLE))
+				return (CYON_RESULT_OK);
 		}
 
 		nb->s_off += (size_t)r;
@@ -247,16 +287,34 @@ again:
 	return (CYON_RESULT_OK);
 }
 
-int
-net_recv_flush(struct connection *c)
+static int
+net_ssl_check(struct connection *c, int result, int flag)
 {
-	cyon_debug("net_recv_flush(%p)", c);
+	int		r;
 
-	while (!TAILQ_EMPTY(&(c->recv_queue)) &&
-	    (c->flags & CONN_READ_POSSIBLE)) {
-		if (!net_recv(c))
-			return (CYON_RESULT_ERROR);
+	r = SSL_get_error(c->ssl, result);
+	switch (r) {
+	case SSL_ERROR_WANT_READ:
+	case SSL_ERROR_WANT_WRITE:
+		c->flags &= ~flag;
+		return (CYON_RESULT_OK);
 	}
 
-	return (CYON_RESULT_OK);
+	cyon_debug("SSL_write(): %s", ssl_errno_s);
+	return (CYON_RESULT_ERROR);
+}
+
+static int
+net_check(struct connection *c, int flag)
+{
+	if (errno == EINTR)
+		return (CYON_RESULT_OK);
+
+	if (errno == EAGAIN || errno == EWOULDBLOCK) {
+		c->flags &= ~flag;
+		return (CYON_RESULT_OK);
+	}
+
+	cyon_debug("write(): %s", errno_s);
+	return (CYON_RESULT_ERROR);
 }

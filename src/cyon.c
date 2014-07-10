@@ -19,6 +19,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
+#include <sys/un.h>
 
 #include <fcntl.h>
 #include <signal.h>
@@ -33,7 +34,10 @@ static void		cyon_write_pid(void);
 static void		cyon_unlink_pid(void);
 static void		cyon_storewrite_wait(int);
 static void		cyon_ssl_init(char *, char *);
-static void		cyon_server_bind(struct listener *, char *, u_int16_t);
+static void		cyon_bind_socket(struct listener *, int);
+static void		cyon_bind_unix(struct listener *, char *);
+static void		cyon_bind_ip(struct listener *, char *, u_int16_t);
+static void		cyon_bind_finish(struct listener *, void *, size_t);
 
 static struct {
 	int	opt;
@@ -49,6 +53,7 @@ static struct {
 	{ 'r',	"storedir",	"Directory where all data is stored" },
 	{ 's',	"storename",	"Name of the cyon store" },
 	{ 't',	"threads",	"Number of threads to run with" },
+	{ 'u',	"path",		"Unix socket to bind to" },
 	{ 'w',	"interval",	"Time in minutes in between store writes" },
 	{ 'x',	NULL,		"Read-only mode" },
 	{ 0,	NULL,		NULL },
@@ -57,7 +62,6 @@ static struct {
 volatile sig_atomic_t	sig_recv;
 
 struct netcontext	nctx;
-struct listener		server;
 extern const char	*__progname;
 SSL_CTX			*ssl_ctx = NULL;
 u_int16_t		thread_count = 1;
@@ -69,6 +73,8 @@ u_int8_t		store_always_sync = 0;
 u_int8_t		cyon_readonly_mode = 0;
 u_int32_t		idle_timeout = CYON_IDLE_TIMER_MAX;
 
+static struct listener	server_inet;
+static struct listener	server_unix;
 static pid_t		writepid = -1;
 static u_int32_t	store_write_int = CYON_STORE_WRITE_INTERVAL;
 
@@ -76,22 +82,23 @@ int
 main(int argc, char *argv[])
 {
 	struct stat	st;
-	char		*ip;
 	u_int64_t	now;
 	u_int16_t	port;
 	int		ch, err;
 	u_int8_t	foreground;
 	char		fpath[MAXPATHLEN];
+	char		*ip, *unix_sockpath;
 	u_int64_t	last_store_flush, last_signaled_write_check;
 
+	ip = NULL;
 	port = 3331;
 	foreground = 0;
 	storepath = NULL;
-	ip = "127.0.0.1";
+	unix_sockpath = NULL;
 	store_retain_logs = 0;
 	store_mode = CYON_MEM_STORE;
 
-	while ((ch = getopt(argc, argv, "ab:dfi:lnp:r:s:t:w:xz")) != -1) {
+	while ((ch = getopt(argc, argv, "ab:dfi:lnp:r:s:t:u:w:xz")) != -1) {
 		switch (ch) {
 		case 'a':
 			store_always_sync = 1;
@@ -134,6 +141,9 @@ main(int argc, char *argv[])
 			if (err != CYON_RESULT_OK)
 				fatal("Invalid number of threads: %s", optarg);
 			break;
+		case 'u':
+			unix_sockpath = optarg;
+			break;
 		case 'w':
 			store_write_int = cyon_strtonum(optarg, 0, 254, &err);
 			if (err != CYON_RESULT_OK)
@@ -162,7 +172,7 @@ main(int argc, char *argv[])
 	if (store_mode == CYON_DISK_STORE && store_nopersist)
 		fatal("Cannot use -n with -d");
 
-	if (argc != 2)
+	if (ip != NULL && argc != 2)
 		usage();
 
 	snprintf(fpath, sizeof(fpath), CYON_WRITELOG_FILE,
@@ -175,9 +185,16 @@ main(int argc, char *argv[])
 	cyon_log_init();
 	cyon_mem_init();
 	cyon_threads_init();
-	cyon_ssl_init(argv[0], argv[1]);
+
+	if (ip != NULL)
+		cyon_ssl_init(argv[0], argv[1]);
+
 	cyon_connection_init();
-	cyon_server_bind(&server, ip, port);
+
+	if (ip != NULL)
+		cyon_bind_ip(&server_inet, ip, port);
+	if (unix_sockpath != NULL)
+		cyon_bind_unix(&server_unix, unix_sockpath);
 
 	if (foreground == 0)
 		printf("cyon daemonizing, check system log for details\n");
@@ -201,11 +218,19 @@ main(int argc, char *argv[])
 
 	server_started = 1;
 	last_signaled_write_check = last_store_write = cyon_time_ms();
-	cyon_log(LOG_NOTICE, "server ready on %s:%d running %d threads",
-	    ip, port, thread_count);
+	cyon_log(LOG_NOTICE, "server ready - running %d threads", thread_count);
 
 	cyon_platform_event_init(&nctx);
-	cyon_platform_event_schedule(&nctx, server.fd, EPOLLIN, 0, &server);
+
+	if (ip != NULL) {
+		cyon_platform_event_schedule(&nctx, server_inet.fd,
+		    EPOLLIN, 0, &server_inet);
+	}
+
+	if (unix_sockpath != NULL) {
+		cyon_platform_event_schedule(&nctx, server_unix.fd,
+		    EPOLLIN, 0, &server_unix);
+	}
 
 	for (;;) {
 		if (sig_recv == SIGQUIT)
@@ -259,6 +284,13 @@ main(int argc, char *argv[])
 	cyon_storewrite_wait(1);
 	cyon_unlink_pid();
 
+	if (unix_sockpath != NULL) {
+		if (unlink(unix_sockpath) == -1) {
+			cyon_log(LOG_NOTICE, "unlink(%s): %s",
+			    unix_sockpath, errno_s);
+		}
+	}
+
 	cyon_log(LOG_NOTICE, "server stopped");
 
 	return (0);
@@ -305,26 +337,52 @@ cyon_ssl_init(char *cert, char *key)
 }
 
 static void
-cyon_server_bind(struct listener *l, char *ip, u_int16_t port)
+cyon_bind_ip(struct listener *l, char *ip, u_int16_t port)
 {
 	int	on;
 
-	if ((l->fd = socket(AF_INET, SOCK_STREAM, 0)) == -1)
-		fatal("socket(): %s", errno_s);
-	if (!cyon_connection_nonblock(l->fd))
-		fatal("cyon_connection_nonblock(): %s", errno_s);
+	cyon_bind_socket(l, AF_INET);
+	l->type = EVENT_TYPE_INET_SOCKET;
 
 	on = 1;
-	if (setsockopt(l->fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&on,
-	    sizeof(on)) == -1)
+	if (setsockopt(l->fd, SOL_SOCKET, SO_REUSEADDR,
+	    (const char *)&on, sizeof(on)) == -1)
 		fatal("setsockopt(): %s", errno_s);
 
-	memset(&(l->sin), 0, sizeof(l->sin));
-	l->sin.sin_family = AF_INET;
-	l->sin.sin_port = htons(port);
-	l->sin.sin_addr.s_addr = inet_addr(ip);
+	memset(&(l->a_sin), 0, sizeof(l->a_sin));
+	l->a_sin.sin_family = AF_INET;
+	l->a_sin.sin_port = htons(port);
+	l->a_sin.sin_addr.s_addr = inet_addr(ip);
 
-	if (bind(l->fd, (struct sockaddr *)&(l->sin), sizeof(l->sin)) == -1)
+	cyon_bind_finish(l, &(l->a_sin), sizeof(l->a_sin));
+}
+
+static void
+cyon_bind_unix(struct listener *l, char *path)
+{
+	cyon_bind_socket(l, AF_UNIX);
+	l->type = EVENT_TYPE_UNIX_SOCKET;
+
+	memset(&(l->a_sun), 0, sizeof(l->a_sun));
+	l->a_sun.sun_family = AF_UNIX;
+	cyon_strlcpy(l->a_sun.sun_path, path, sizeof(l->a_sun.sun_path));
+
+	cyon_bind_finish(l, &(l->a_sun), sizeof(l->a_sun));
+}
+
+static void
+cyon_bind_socket(struct listener *l, int type)
+{
+	if ((l->fd = socket(type, SOCK_STREAM, 0)) == -1)
+		fatal("socket(): %s", errno_s);
+	if (!cyon_connection_nonblock(l->fd, (type == AF_INET)))
+		fatal("cyon_connection_nonblock(): %s", errno_s);
+}
+
+static void
+cyon_bind_finish(struct listener *l, void *s, size_t len)
+{
+	if (bind(l->fd, (struct sockaddr *)s, len) == -1)
 		fatal("bind(): %s", errno_s);
 	if (listen(l->fd, 10) == -1)
 		fatal("listen(): %s", errno_s);
@@ -439,7 +497,7 @@ usage(void)
 {
 	u_int8_t	i;
 
-	printf("Usage: cyon-server [options] [certfile] [keyfile]\n");
+	printf("Usage: cyon-server [options] ([certfile] [keyfile])\n");
 	printf("Available options for cyon:\n");
 	for (i = 0; use_options[i].descr != NULL; i++) {
 		printf("   -%c %s\t\t%s\n", use_options[i].opt,

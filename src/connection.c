@@ -65,7 +65,8 @@ cyon_connection_accept(struct listener *l)
 		return (CYON_RESULT_ERROR);
 	}
 
-	if (!cyon_connection_nonblock(c->fd)) {
+	if (!cyon_connection_nonblock(c->fd,
+	    (l->type == EVENT_TYPE_INET_SOCKET))) {
 		close(c->fd);
 		cyon_mem_free(c);
 		return (CYON_RESULT_ERROR);
@@ -73,13 +74,19 @@ cyon_connection_accept(struct listener *l)
 
 	t = cyon_thread_getnext();
 
+	c->l = l;
 	c->ssl = NULL;
 	c->flags = 0;
 	c->owner = t;
 	c->nctx = &(t->nctx);
 	c->idle_timer.start = 0;
-	c->state = CONN_STATE_SSL_SHAKE;
+	c->type = EVENT_TYPE_CONNECTION;
 	c->idle_timer.length = idle_timeout;
+
+	if (l->type == EVENT_TYPE_INET_SOCKET)
+		c->state = CONN_STATE_SSL_SHAKE;
+	else
+		c->state = CONN_STATE_ESTABLISHED;
 
 	TAILQ_INIT(&(c->send_queue));
 	TAILQ_INIT(&(c->recv_queue));
@@ -273,7 +280,7 @@ cyon_connection_prune(void)
 }
 
 int
-cyon_connection_nonblock(int fd)
+cyon_connection_nonblock(int fd, int nodelay)
 {
 	int		flags;
 
@@ -288,9 +295,11 @@ cyon_connection_nonblock(int fd)
 		return (CYON_RESULT_ERROR);
 	}
 
-	flags = 1;
+	if (nodelay != 1)
+		return (CYON_RESULT_OK);
+
 	if (setsockopt(fd, IPPROTO_TCP,
-	    TCP_NODELAY, (char *)&flags, sizeof(flags)) == -1)
+	    TCP_NODELAY, (char *)&nodelay, sizeof(nodelay)) == -1)
 		cyon_log(LOG_NOTICE, "failed to set TCP_NODELAY on %d", fd);
 
 	return (CYON_RESULT_OK);

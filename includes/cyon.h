@@ -20,6 +20,7 @@
 #include <sys/types.h>
 #include <sys/queue.h>
 #include <sys/epoll.h>
+#include <sys/un.h>
 
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -176,15 +177,29 @@ struct pool {
 #define CONN_IS_NODE			0x20
 #define CONN_IDLE_TIMER_ACT		0x40
 
+#define EVENT_TYPE_INET_SOCKET		1
+#define EVENT_TYPE_UNIX_SOCKET		2
+#define EVENT_TYPE_CONNECTION		3
+
 struct listener {
+	int			type;
 	int			fd;
-	struct sockaddr_in	sin;
+
+	union {
+		struct sockaddr_in	sin;
+		struct sockaddr_un	sun;
+	} addr;
+
+#define a_sin		addr.sin
+#define a_sun		addr.sun
 };
 
 struct connection {
+	int			type;
 	int			fd;
 	u_int8_t		state;
 	struct sockaddr_in	sin;
+	struct listener		*l;
 	SSL			*ssl;
 	u_int8_t		flags;
 	void			*owner;
@@ -277,7 +292,7 @@ int		cyon_atomic_read(int, void *, u_int32_t, SHA_CTX *, int);
 
 void		cyon_connection_init(void);
 void		cyon_connection_prune(void);
-int		cyon_connection_nonblock(int);
+int		cyon_connection_nonblock(int, int);
 int		cyon_connection_accept(struct listener *);
 int		cyon_connection_handle(struct connection *);
 void		cyon_connection_remove(struct connection *);
@@ -305,8 +320,6 @@ void		net_recv_queue(struct connection *, size_t, int,
 int		net_recv_expand(struct connection *, struct netbuf *,
 		    size_t, int (*cb)(struct netbuf *));
 
-int		net_send(struct connection *);
-int		net_recv(struct connection *);
 int		net_send_flush(struct connection *);
 int		net_recv_flush(struct connection *);
 
