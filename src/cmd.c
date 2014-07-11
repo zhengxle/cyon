@@ -41,7 +41,6 @@ void		cyon_ssl_write(void *, u_int32_t);
 void		cyon_ssl_read(void *, u_int32_t);
 
 int		cyon_del(u_int8_t *, u_int32_t);
-int		cyon_getkeys(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);
 int		cyon_get(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);
 int		cyon_upload(u_int8_t, u_int8_t *,
 		    u_int32_t, u_int8_t *, u_int32_t);
@@ -52,7 +51,6 @@ void		cyon_cli_del(u_int8_t, char **);
 void		cyon_cli_stats(u_int8_t, char **);
 void		cyon_cli_write(u_int8_t, char **);
 void		cyon_cli_setauth(u_int8_t, char **);
-void		cyon_cli_getkeys(u_int8_t, char **);
 void		cyon_cli_replay(u_int8_t, char **);
 
 int		cfd = -1;
@@ -71,8 +69,6 @@ struct {
 	{ "stats",		cyon_cli_stats },
 	{ "set-auth",		cyon_cli_setauth },
 	{ "replace",		cyon_cli_upload },
-	{ "getkeys",		cyon_cli_getkeys },
-	{ "makelink",		cyon_cli_upload },
 	{ "replay",		cyon_cli_replay },
 	{ NULL,		NULL },
 };
@@ -323,36 +319,6 @@ cyon_get(u_int8_t *key, u_int32_t klen, u_int8_t **out, u_int32_t *dlen)
 }
 
 int
-cyon_getkeys(u_int8_t *key, u_int32_t klen, u_int8_t **out, u_int32_t *dlen)
-{
-	struct cyon_op		op;
-
-	op.op = CYON_OP_GETKEYS;
-	net_write32((u_int8_t *)&(op.length), klen);
-
-	cyon_ssl_write(&op, sizeof(op));
-	cyon_ssl_write(key, klen);
-
-	memset(&op, 0, sizeof(op));
-	cyon_ssl_read(&op, sizeof(op));
-
-	if (op.op == CYON_OP_RESULT_OK) {
-		*dlen = net_read32((u_int8_t *)&(op.length));
-
-		if (*dlen > 0) {
-			if ((*out = malloc(*dlen)) == NULL)
-				fatal("malloc(): %s", errno_s);
-			cyon_ssl_read(*out, *dlen);
-		}
-
-	} else if (op.op != CYON_OP_RESULT_ERROR) {
-		fatal("Unexpected result from server: %d", op.op);
-	}
-
-	return (op.op == CYON_OP_RESULT_OK);
-}
-
-int
 cyon_del(u_int8_t *key, u_int32_t klen)
 {
 	struct cyon_op		op;
@@ -385,35 +351,26 @@ cyon_cli_upload(u_int8_t argc, char **argv)
 		id = CYON_OP_PUT;
 	} else if (!strcmp(argv[0], "replace")) {
 		id = CYON_OP_REPLACE;
-	} else if (!strcmp(argv[0], "makelink")) {
-		id = CYON_OP_MAKELINK;
 	} else {
 		fatal("invalid request: %s", argv[0]);
 	}
 
-	if (argc != 3) {
-		fatal("%s [key] [%s]", argv[0],
-		    (id == CYON_OP_MAKELINK) ? "origin" : "infile");
-	}
+	if (argc != 3)
+		fatal("%s [key] [infile]", argv[0]);
 
-	if (id != CYON_OP_MAKELINK) {
-		if ((fd = open(argv[2], O_RDONLY)) == -1)
-			fatal("could not open '%s': %s", argv[2], errno_s);
+	if ((fd = open(argv[2], O_RDONLY)) == -1)
+		fatal("could not open '%s': %s", argv[2], errno_s);
 
-		if (fstat(fd, &st) == -1)
-			fatal("fstat() failed: %s", errno_s);
+	if (fstat(fd, &st) == -1)
+		fatal("fstat() failed: %s", errno_s);
 
-		size = st.st_size;
-		if ((d = malloc(size)) == NULL)
-			fatal("malloc(): failed: %s", errno_s);
+	size = st.st_size;
+	if ((d = malloc(size)) == NULL)
+		fatal("malloc(): failed: %s", errno_s);
 
-		r = read(fd, d, size);
-		if (r != size)
-			fatal("could not read from '%s'", argv[2]);
-	} else {
-		d = (u_int8_t *)argv[2];
-		size = strlen(argv[2]);
-	}
+	r = read(fd, d, size);
+	if (r != size)
+		fatal("could not read from '%s'", argv[2]);
 
 	if (cyon_upload(id,
 	    (u_int8_t *)argv[1], strlen(argv[1]), d, size))
@@ -421,10 +378,8 @@ cyon_cli_upload(u_int8_t argc, char **argv)
 	else
 		fatal("The key was not added successfully.");
 
-	if (id != CYON_OP_MAKELINK) {
-		free(d);
-		close(fd);
-	}
+	free(d);
+	close(fd);
 }
 
 void
@@ -456,54 +411,6 @@ cyon_cli_get(u_int8_t argc, char **argv)
 	} else {
 		fatal("The server did not return a result");
 	}
-}
-
-void
-cyon_cli_getkeys(u_int8_t argc, char **argv)
-{
-	int		r;
-	char		*key;
-	u_int16_t	klen;
-	u_int8_t	*out, *p;
-	u_int32_t	len, i, dlen;
-
-	if (argc < 2)
-		fatal("getkeys [key] [show]");
-
-	r = cyon_getkeys((u_int8_t *)argv[1], strlen(argv[1]), &out, &len);
-	if (!r)
-		fatal("A server error occured");
-
-	if (len == 0) {
-		printf("no keys found\n");
-		return;
-	}
-
-	i = 0;
-	p = out;
-	while (p < (out + len)) {
-		klen = net_read16(p);
-		if (klen == 0)
-			break;
-
-		p += sizeof(u_int16_t);
-
-		if (argc == 3)
-			key = (char *)p;
-
-		p += klen;
-		dlen = net_read32(p);
-		p += sizeof(u_int32_t);
-
-		if (argc == 3)
-			printf("%.*s -> %d bytes\n", klen, key, dlen);
-
-		p += dlen;
-		i++;
-	}
-
-	free(out);
-	printf("got %d bytes - received %d keys\n", len, i);
 }
 
 void

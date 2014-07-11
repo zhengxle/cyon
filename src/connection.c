@@ -34,7 +34,6 @@ static int		cyon_connection_recv_replay(struct netbuf *);
 static int		cyon_connection_recv_replace(struct netbuf *);
 static int		cyon_connection_recv_auth(struct netbuf *);
 static int		cyon_connection_recv_setauth(struct netbuf *);
-static int		cyon_connection_recv_getkeys(struct netbuf *);
 static void		cyon_connection_recv_stats(struct connection *);
 static void		cyon_connection_recv_write(struct connection *);
 
@@ -323,14 +322,10 @@ cyon_connection_recv_op(struct netbuf *nb)
 
 	switch (op->op) {
 	case CYON_OP_PUT:
-	case CYON_OP_MAKELINK:
 		r = net_recv_expand(c, nb, len, cyon_connection_recv_put);
 		break;
 	case CYON_OP_GET:
 		r = net_recv_expand(c, nb, len, cyon_connection_recv_get);
-		break;
-	case CYON_OP_GETKEYS:
-		r = net_recv_expand(c, nb, len, cyon_connection_recv_getkeys);
 		break;
 	case CYON_OP_SETAUTH:
 		r = net_recv_expand(c, nb, len, cyon_connection_recv_setauth);
@@ -377,7 +372,6 @@ cyon_connection_recv_put(struct netbuf *nb)
 	struct cyon_op		ret;
 	u_int8_t		*key, *data;
 	u_int32_t		dlen, klen, flags;
-	struct cyon_op		*op = (struct cyon_op *)nb->buf;
 	struct connection	*c = (struct connection *)nb->owner;
 
 	klen = net_read32(nb->buf + sizeof(struct cyon_op));
@@ -391,11 +385,7 @@ cyon_connection_recv_put(struct netbuf *nb)
 	key = nb->buf + sizeof(struct cyon_op) + (sizeof(u_int32_t) * 2);
 	data = key + klen;
 
-	if (op->op == CYON_OP_MAKELINK)
-		flags = NODE_FLAG_ISLINK;
-	else
-		flags = 0;
-
+	flags = 0;
 	cyon_store_lock(1);
 
 	if (cyon_store_put(key, klen, data, dlen, flags))
@@ -445,51 +435,6 @@ cyon_connection_recv_get(struct netbuf *nb)
 	}
 
 	cyon_store_unlock();
-
-	return (net_send_flush(c));
-}
-
-static int
-cyon_connection_recv_getkeys(struct netbuf *nb)
-{
-	struct getkeys_ctx	ctx;
-	u_int16_t		eok;
-	u_int32_t		klen;
-	u_int8_t		*key;
-	struct netbuf		*nbl;
-	struct cyon_op		ret, *op;
-	struct connection	*c = (struct connection *)nb->owner;
-
-	op = (struct cyon_op *)nb->buf;
-	klen = net_read32((u_int8_t *)&(op->length));
-	key = nb->buf + sizeof(struct cyon_op);
-
-	if (klen == 0)
-		return (CYON_RESULT_ERROR);
-
-	ret.op = CYON_OP_RESULT_OK;
-	net_write32((u_int8_t *)&(ret.length), 0);
-	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), NETBUF_NO_FRAGMENT);
-
-	/*
-	 * Kind of a hack. Grab the queued packet so we can update
-	 * the number of bytes that will be returned to the client in it.
-	 */
-	nbl = TAILQ_LAST(&(c->send_queue), netbuf_head);
-
-	cyon_store_lock(0);
-	cyon_store_getkeys(&ctx, c, key, klen);
-	cyon_store_unlock();
-
-	cyon_mem_free(ctx.key);
-
-	net_write16((u_int8_t *)&eok, 0);
-	net_send_queue(c, (u_int8_t *)&eok, sizeof(eok), 0);
-	ctx.bytes += sizeof(eok);
-
-	/* Update the total count now in the cyon_op response. */
-	op = (struct cyon_op *)nbl->buf;
-	net_write32((u_int8_t *)&(op->length), ctx.bytes);
 
 	return (net_send_flush(c));
 }

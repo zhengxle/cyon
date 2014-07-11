@@ -257,6 +257,11 @@ again:
 
 		if ((r == -1 || r == 0) &&
 		    c->l->type == EVENT_TYPE_UNIX_SOCKET) {
+			if (r == 0) {
+				c->flags &= ~CONN_READ_POSSIBLE;
+				return (CYON_RESULT_ERROR);
+			}
+
 			if (!net_check(c, CONN_READ_POSSIBLE))
 				return (CYON_RESULT_ERROR);
 			if (!(c->flags & CONN_READ_POSSIBLE))

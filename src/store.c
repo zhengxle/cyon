@@ -36,9 +36,6 @@
  * of how keys and data are stored.
  */
 
-#define CYON_RESOLVE_NOTHING		0
-#define CYON_RESOLVE_LINK		1
-
 #define STORE_HAS_PASSPHRASE		0x01
 
 #define NODE_REGION_OFFSET(o, p)					\
@@ -93,9 +90,7 @@ static void		cyon_store_map(void);
 static void		cyon_diskstore_open(void);
 static void		cyon_storelog_replay_all(void);
 static void		cyon_store_mapnode(int, struct node *);
-static struct node	*cyon_node_lookup(u_int8_t *, u_int32_t, u_int8_t);
-static void		cyon_traverse_node(struct getkeys_ctx *,
-			    struct connection *, struct node *);
+static struct node	*cyon_node_lookup(u_int8_t *, u_int32_t);
 static void		cyon_store_writenode(int, struct node *, u_int8_t *,
 			    u_int32_t, u_int32_t *, SHA_CTX *);
 static struct disknode	*cyon_diskstore_write(u_int8_t *, u_int32_t,
@@ -221,15 +216,9 @@ cyon_store_get(u_int8_t *key, u_int32_t len, u_int8_t **out, u_int32_t *olen)
 	struct node		*p;
 	struct node_data	*nd;
 	struct disknode		*dn;
-	int			resolve;
-
-	if (store_mode == CYON_DISK_STORE)
-		resolve = CYON_RESOLVE_NOTHING;
-	else
-		resolve = CYON_RESOLVE_LINK;
 
 	*out = NULL;
-	if ((p = cyon_node_lookup(key, len, resolve)) == NULL)
+	if ((p = cyon_node_lookup(key, len)) == NULL)
 		return (CYON_RESULT_ERROR);
 
 	if (!(p->flags & NODE_FLAG_HASDATA))
@@ -251,30 +240,6 @@ cyon_store_get(u_int8_t *key, u_int32_t len, u_int8_t **out, u_int32_t *olen)
 	return (CYON_RESULT_OK);
 }
 
-void
-cyon_store_getkeys(struct getkeys_ctx *ctx, struct connection *c,
-    u_int8_t *root, u_int32_t rlen)
-{
-	struct node	*p;
-
-	ctx->off = 0;
-	ctx->bytes = 0;
-	ctx->len = CYON_KEY_MAX;
-	ctx->key = cyon_malloc(ctx->len);
-
-	if ((p = cyon_node_lookup(root, rlen, CYON_RESOLVE_NOTHING)) == NULL)
-		return;
-
-	if (p->region == NULL)
-		return;
-
-	memset(ctx->key, '\0', ctx->len);
-	memcpy(ctx->key, root, rlen);
-	ctx->off = rlen;
-
-	cyon_traverse_node(ctx, c, p);
-}
-
 int
 cyon_store_del(u_int8_t *key, u_int32_t len)
 {
@@ -285,7 +250,7 @@ cyon_store_del(u_int8_t *key, u_int32_t len)
 	if (!replaying_log && cyon_readonly_mode)
 		return (CYON_RESULT_ERROR);
 
-	if ((p = cyon_node_lookup(key, len, CYON_RESOLVE_NOTHING)) == NULL)
+	if ((p = cyon_node_lookup(key, len)) == NULL)
 		return (CYON_RESULT_ERROR);
 
 	if (!(p->flags & NODE_FLAG_HASDATA))
@@ -326,7 +291,7 @@ cyon_store_replace(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 	if (!replaying_log && cyon_readonly_mode)
 		return (CYON_RESULT_ERROR);
 
-	if ((p = cyon_node_lookup(key, len, CYON_RESOLVE_NOTHING)) == NULL)
+	if ((p = cyon_node_lookup(key, len)) == NULL)
 		return (CYON_RESULT_ERROR);
 
 	if (!(p->flags & NODE_FLAG_HASDATA))
@@ -378,9 +343,9 @@ int
 cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
     u_int32_t dlen, u_int32_t flags)
 {
+	struct node		*p;
 	struct node_data	*nd;
 	struct disknode		*dn;
-	struct node		*p, *lnode;
 	size_t			olen, rlen;
 	u_int32_t		base, offset, xlen;
 	u_int8_t		i, idx, *old, *odata;
@@ -475,19 +440,9 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
 		odata = data;
 		xlen = dlen;
 
-		if (flags & NODE_FLAG_ISLINK) {
-			lnode = cyon_node_lookup(data,
-			    dlen, CYON_RESOLVE_NOTHING);
-			if (lnode == NULL)
-				return (CYON_RESULT_ERROR);
-
-			data = lnode->region + sizeof(struct node_data);
-			dlen = sizeof(struct disknode);
-		} else {
-			dn = cyon_diskstore_write(key, len, data, dlen);
-			data = (u_int8_t *)dn;
-			dlen = sizeof(*dn);
-		}
+		dn = cyon_diskstore_write(key, len, data, dlen);
+		data = (u_int8_t *)dn;
+		dlen = sizeof(*dn);
 	}
 
 	if (!replaying_log && !store_nopersist) {
@@ -1183,13 +1138,12 @@ cyon_store_mapnode(int fd, struct node *p)
 }
 
 static struct node *
-cyon_node_lookup(u_int8_t *key, u_int32_t len, u_int8_t resolve)
+cyon_node_lookup(u_int8_t *key, u_int32_t len)
 {
 	u_int32_t		i;
-	struct node_data	*nd;
+	struct node		*p;
 	u_int8_t		idx;
 	u_int32_t		rlen;
-	struct node		*p, *l;
 
 	if (len > CYON_KEY_MAX) {
 		cyon_log(LOG_NOTICE, "Attempt to lookup key > CYON_KEY_MAX");
@@ -1214,95 +1168,7 @@ cyon_node_lookup(u_int8_t *key, u_int32_t len, u_int8_t resolve)
 		    ((idx - p->rbase) * sizeof(struct node)));
 	}
 
-	if (resolve == CYON_RESOLVE_LINK && (p->flags & NODE_FLAG_ISLINK)) {
-		nd = (struct node_data *)p->region;
-		l = cyon_node_lookup(p->region + sizeof(struct node_data),
-		    nd->size, CYON_RESOLVE_LINK);
-
-		if (l == NULL || !(l->flags & NODE_FLAG_HASDATA)) {
-			/* XXX - Should we do anything? */
-		}
-
-		p = l;
-	}
-
 	return (p);
-}
-
-static void
-cyon_traverse_node(struct getkeys_ctx *ctx, struct connection *c,
-    struct node *rp)
-{
-	struct disknode		*dn;
-	struct node_data	*nd;
-	u_int16_t		klen;
-	struct node		*p, *wp;
-	u_int8_t		i, *data;
-	u_int32_t		rlen, nlen, len;
-
-	if (rp->region == NULL)
-		return;
-
-	if (rp->flags & NODE_FLAG_HASDATA) {
-		wp = rp;
-		nd = (struct node_data *)rp->region;
-		rlen = sizeof(struct node_data) + nd->size;
-		data = rp->region + sizeof(struct node_data);
-
-		if (store_mode == CYON_DISK_STORE) {
-			if (nd->size != sizeof(struct disknode))
-				fatal("len != sizeof(struct disknode)");
-
-			dn = (struct disknode *)(rp->region +
-			    sizeof(struct node_data));
-			if (!cyon_diskstore_read(dn, &data, &len))
-				goto next;
-		} else {
-			if (rp->flags & NODE_FLAG_ISLINK) {
-				rlen = sizeof(struct node_data) + nd->size;
-				wp = cyon_node_lookup(rp->region +
-				    sizeof(struct node_data), nd->size,
-				    CYON_RESOLVE_LINK);
-
-				if (wp == NULL ||
-				    !(wp->flags & NODE_FLAG_HASDATA))
-					goto next;
-
-				nd = (struct node_data *)wp->region;
-				data = wp->region + sizeof(struct node_data);
-			}
-
-			len = nd->size;
-		}
-
-		net_write32((u_int8_t *)&nlen, len);
-		net_write16((u_int8_t *)&klen, ctx->off);
-
-		net_send_queue(c, (u_int8_t *)&klen, sizeof(klen), 0);
-		net_send_queue(c, ctx->key, ctx->off, 0);
-		net_send_queue(c, (u_int8_t *)&nlen, sizeof(nlen), 0);
-		net_send_queue(c, data, len, 0);
-
-		ctx->bytes += sizeof(klen) + ctx->off + sizeof(nlen) + len;
-	} else {
-		rlen = 0;
-	}
-
-next:
-	if (rp->rbase == 0 && rp->rtop == 0)
-		return;
-
-	for (i = rp->rbase; i <= rp->rtop; i++) {
-		p = (struct node *)((u_int8_t *)rp->region + rlen +
-		    ((i - rp->rbase) * sizeof(struct node)));
-
-		if (ctx->off >= ctx->len)
-			break;
-
-		ctx->key[ctx->off++] = i;
-		cyon_traverse_node(ctx, c, p);
-		ctx->key[ctx->off--] = '\0';
-	}
 }
 
 static void
@@ -1455,7 +1321,7 @@ cyon_diskstore_create(u_int8_t *key, u_int32_t klen,
 	u_int8_t		*buf;
 	struct disknode		*dn, *ndn;
 
-	if ((rp = cyon_node_lookup(key, klen, CYON_RESOLVE_NOTHING)) == NULL)
+	if ((rp = cyon_node_lookup(key, klen)) == NULL)
 		return (CYON_RESULT_ERROR);
 
 	if (!(rp->flags & NODE_FLAG_HASDATA))
