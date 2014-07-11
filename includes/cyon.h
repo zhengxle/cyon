@@ -72,6 +72,8 @@ void		fatal(const char *, ...);
 /* Server stuff only. */
 #if defined(CYON_SERVER)
 
+#define CYON_DEFAULT_PID	"/tmp/cyon.pid"
+
 #if defined(DEBUG)
 #define cyon_debug(fmt, ...)		\
 	cyon_debug_internal(__FILE__, __LINE__, fmt, ##__VA_ARGS__)

@@ -163,7 +163,7 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (storepath == NULL || storename == NULL) {
+	if (store_nopersist == 0 && (storepath == NULL || storename == NULL)) {
 		fprintf(stderr,
 		    "Please set storepath (-r) and storename (-s)\n");
 		usage();
@@ -514,7 +514,11 @@ cyon_write_pid(void)
 	FILE		*fp;
 	char		fpath[MAXPATHLEN];
 
-	snprintf(fpath, sizeof(fpath), "%s/cyon.pid", storepath);
+	if (store_nopersist) {
+		cyon_strlcpy(fpath, CYON_DEFAULT_PID, sizeof(fpath));
+	} else {
+		snprintf(fpath, sizeof(fpath), "%s/cyon.pid", storepath);
+	}
 
 	if ((fp = fopen(fpath, "w")) == NULL) {
 		cyon_log(LOG_NOTICE, "failed to write pidfile: %s", errno_s);
@@ -529,7 +533,12 @@ cyon_unlink_pid(void)
 {
 	char		fpath[MAXPATHLEN];
 
-	snprintf(fpath, sizeof(fpath), "%s/cyon.pid", storepath);
+	if (store_nopersist) {
+		cyon_strlcpy(fpath, CYON_DEFAULT_PID, sizeof(fpath));
+	} else {
+		snprintf(fpath, sizeof(fpath), "%s/cyon.pid", storepath);
+	}
+
 	if (unlink(fpath) == -1)
 		cyon_log(LOG_NOTICE, "pid file lingers: %s", errno_s);
 }
