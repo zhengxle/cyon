@@ -205,7 +205,8 @@ net_send(struct connection *c)
 					return (CYON_RESULT_OK);
 			}
 
-			nb->s_off += (size_t)r;
+			if (r != -1)
+				nb->s_off += (size_t)r;
 		}
 
 		if (nb->s_off == nb->b_len) {
@@ -268,7 +269,9 @@ again:
 				return (CYON_RESULT_OK);
 		}
 
-		nb->s_off += (size_t)r;
+		if (r != -1)
+			nb->s_off += (size_t)r;
+
 		if (nb->s_off == nb->b_len) {
 			r = nb->cb(nb);
 			if (nb->s_off == nb->b_len) {

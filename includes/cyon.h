@@ -188,15 +188,19 @@ struct listener {
 		struct sockaddr_un	sun;
 	} addr;
 
+};
+
 #define a_sin		addr.sin
 #define a_sun		addr.sun
-};
 
 struct connection {
 	int			type;
 	int			fd;
 	u_int8_t		state;
-	struct sockaddr_in	sin;
+	union {
+		struct sockaddr_in	sin;
+		struct sockaddr_un	sun;
+	} addr;
 	struct listener		*l;
 	SSL			*ssl;
 	u_int8_t		flags;

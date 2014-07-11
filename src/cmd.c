@@ -37,8 +37,9 @@ void		cyon_ssl_init(void);
 
 void		cyon_disconnect(void);
 void		fatal(const char *, ...);
-void		cyon_ssl_write(void *, u_int32_t);
-void		cyon_ssl_read(void *, u_int32_t);
+
+void		cyon_write(void *, u_int32_t);
+void		cyon_read(void *, u_int32_t);
 
 int		cyon_del(u_int8_t *, u_int32_t);
 int		cyon_get(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);
@@ -57,6 +58,7 @@ int		cfd = -1;
 char		*host = NULL;
 SSL		*ssl = NULL;
 SSL_CTX		*ssl_ctx = NULL;
+char		*unixpath = NULL;
 
 struct {
 	char		*cmd;
@@ -79,7 +81,7 @@ usage(void)
 	int			i;
 	extern const char	*__progname;
 
-	fprintf(stderr, "Usage: %s [-s host] [cmd]\n", __progname);
+	fprintf(stderr, "Usage: %s [-s host] [-u socket] [cmd]\n", __progname);
 	fprintf(stderr, "Available commands:\n");
 	for (i = 0; cmds[i].cmd != NULL; i++)
 		printf("\t%s\n", cmds[i].cmd);
@@ -97,13 +99,16 @@ main(int argc, char *argv[])
 	u_int8_t		i, authpwd, *p;
 
 	authpwd = 0;
-	while ((r = getopt(argc, argv, "ps:")) != -1) {
+	while ((r = getopt(argc, argv, "ps:u:")) != -1) {
 		switch (r) {
 		case 'p':
 			authpwd = 1;
 			break;
 		case 's':
 			host = optarg;
+			break;
+		case 'u':
+			unixpath = optarg;
 			break;
 		default:
 			usage();
@@ -114,11 +119,13 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (host == NULL || argv[0] == NULL)
+	if (host != NULL && unixpath != NULL)
+		fatal("-s and -u are mutually exclusive");
+
+	if ((host == NULL && unixpath == NULL) || argv[0] == NULL)
 		usage();
 
 	cyon_connect();
-	cyon_ssl_init();
 
 	if (authpwd) {
 		if ((input = getpass("passphrase: ")) == NULL)
@@ -144,10 +151,10 @@ main(int argc, char *argv[])
 		net_write32((u_int8_t *)&(op->length), 0);
 	}
 
-	cyon_ssl_write(p, len);
+	cyon_write(p, len);
 	free(p);
 
-	cyon_ssl_read(&ret, sizeof(struct cyon_op));
+	cyon_read(&ret, sizeof(struct cyon_op));
 	if (ret.op != CYON_OP_RESULT_OK)
 		fatal("access denied");
 
@@ -193,53 +200,81 @@ cyon_ssl_init(void)
 void
 cyon_connect(void)
 {
-	int			r;
+	struct sockaddr_un	sun;
+	struct sockaddr		*sin;
 	char			*port;
+	socklen_t		sinlen;
+	int			r, type, l;
 	struct addrinfo		*res, *results;
 
-	if ((port = strchr(host, ':')) != NULL)
-		*(port)++ = '\0';
-	else
-		port = "3331";
+	if (host != NULL) {
+		if ((port = strchr(host, ':')) != NULL)
+			*(port)++ = '\0';
+		else
+			port = "3331";
 
-	r = getaddrinfo(host, port, NULL, &results);
-	if (r != 0)
-		fatal("%s", gai_strerror(r));
+		r = getaddrinfo(host, port, NULL, &results);
+		if (r != 0)
+			fatal("%s", gai_strerror(r));
 
-	for (res = results; res != NULL; res = res->ai_next) {
-		if (res->ai_family == AF_INET &&
-		    res->ai_socktype == SOCK_STREAM)
-			break;
+		for (res = results; res != NULL; res = res->ai_next) {
+			if (res->ai_family == AF_INET &&
+			    res->ai_socktype == SOCK_STREAM)
+				break;
+		}
+
+		if (res == NULL)
+			fatal("No useable address found for %s", host);
+
+		type = AF_INET;
+		sin = res->ai_addr;
+		sinlen = res->ai_addrlen;
+	} else {
+		type = AF_UNIX;
+		sin = (struct sockaddr *)&sun;
+		sinlen = sizeof(sun);
+
+		memset(&sun, 0, sizeof(sun));
+		sun.sun_family = AF_UNIX;
+		l = snprintf(sun.sun_path, sizeof(sun.sun_path),"%s", unixpath);
+		if (l == -1 || (size_t)l >= sizeof(sun.sun_path))
+			fatal("path too long");
 	}
 
-	if (res == NULL)
-		fatal("No useable address found for %s", host);
-
-	if ((cfd = socket(AF_INET, SOCK_STREAM, 0)) == -1)
+	if ((cfd = socket(type, SOCK_STREAM, 0)) == -1)
 		fatal("socket(): %s", errno_s);
 
-	if (connect(cfd, res->ai_addr, res->ai_addrlen) == -1)
+	if (connect(cfd, sin, sinlen) == -1)
 		fatal("connect(): %s", errno_s);
 
-	freeaddrinfo(results);
+	if (host != NULL) {
+		freeaddrinfo(results);
+		cyon_ssl_init();
+	}
 }
 
 void
 cyon_disconnect(void)
 {
-	SSL_shutdown(ssl);
+	if (host != NULL)
+		SSL_shutdown(ssl);
 	close(cfd);
 }
 
 void
-cyon_ssl_write(void *src, u_int32_t len)
+cyon_write(void *src, u_int32_t len)
 {
-	if (SSL_write(ssl, src, len) <= 0)
-		fatal("SSL_write(): %s", ssl_errno_s);
+	if (host != NULL) {
+		if (SSL_write(ssl, src, len) <= 0)
+			fatal("SSL_write(): %s", ssl_errno_s);
+	} else {
+		if (write(cfd, src, len) <= 0)
+			fatal("write(): %s", errno_s);
+	}
 }
 
 void
-cyon_ssl_read(void *dst, u_int32_t len)
+cyon_read(void *dst, u_int32_t len)
 {
 	int		r;
 	u_int32_t	off;
@@ -247,10 +282,18 @@ cyon_ssl_read(void *dst, u_int32_t len)
 
 	r = 0;
 	off = 0;
+
 	while (off != len) {
-		r = SSL_read(ssl, b + off, len - off);
-		if (r <= 0)
-			fatal("SSL_read(): %s", ssl_errno_s);
+		if (host != NULL) {
+			r = SSL_read(ssl, b + off, len - off);
+			if (r <= 0)
+				fatal("SSL_read(): %s", ssl_errno_s);
+		} else {
+			r = read(cfd, b + off, len - off);
+			if (r <= 0)
+				fatal("read(): %s", errno_s);
+		}
+
 		off += r;
 	}
 }
@@ -279,11 +322,11 @@ cyon_upload(u_int8_t id, u_int8_t *key, u_int32_t klen,
 	memcpy(&p[off + 8], key, klen);
 	memcpy(&p[off + 8 + klen], d, dlen);
 
-	cyon_ssl_write(p, len);
+	cyon_write(p, len);
 	free(p);
 
 	memset(&ret, 0, sizeof(ret));
-	cyon_ssl_read(&ret, sizeof(ret));
+	cyon_read(&ret, sizeof(ret));
 	if (ret.op == CYON_OP_RESULT_OK)
 		return (1);
 
@@ -298,19 +341,19 @@ cyon_get(u_int8_t *key, u_int32_t klen, u_int8_t **out, u_int32_t *dlen)
 	op.op = CYON_OP_GET;
 	net_write32((u_int8_t *)&(op.length), klen);
 
-	cyon_ssl_write(&op, sizeof(op));
-	cyon_ssl_write(key, klen);
+	cyon_write(&op, sizeof(op));
+	cyon_write(key, klen);
 
 	*dlen = 0;
 	*out = NULL;
 
 	memset(&op, 0, sizeof(op));
-	cyon_ssl_read(&op, sizeof(op));
+	cyon_read(&op, sizeof(op));
 	if (op.op == CYON_OP_RESULT_OK) {
 		*dlen = net_read32((u_int8_t *)&(op.length));
 		if ((*out = malloc(*dlen)) == NULL)
 			fatal("malloc(): %s", errno_s);
-		cyon_ssl_read(*out, *dlen);
+		cyon_read(*out, *dlen);
 	} else if (op.op != CYON_OP_RESULT_ERROR) {
 		fatal("Unexpected result from server: %d", op.op);
 	}
@@ -326,11 +369,11 @@ cyon_del(u_int8_t *key, u_int32_t klen)
 	op.op = CYON_OP_DEL;
 	net_write32((u_int8_t *)&(op.length), klen);
 
-	cyon_ssl_write(&op, sizeof(op));
-	cyon_ssl_write(key, klen);
+	cyon_write(&op, sizeof(op));
+	cyon_write(key, klen);
 
 	memset(&op, 0, sizeof(op));
-	cyon_ssl_read(&op, sizeof(op));
+	cyon_read(&op, sizeof(op));
 
 	if (op.op != CYON_OP_RESULT_OK && op.op != CYON_OP_RESULT_ERROR)
 		fatal("Unexpected result from server: %d", op.op);
@@ -432,10 +475,10 @@ cyon_cli_write(u_int8_t argc, char **argv)
 
 	op.op = CYON_OP_WRITE;
 	net_write32((u_int8_t *)&(op.length), 0);
-	cyon_ssl_write(&op, sizeof(op));
+	cyon_write(&op, sizeof(op));
 
 	memset(&op, 0, sizeof(op));
-	cyon_ssl_read(&op, sizeof(op));
+	cyon_read(&op, sizeof(op));
 	if (op.op == CYON_OP_RESULT_OK)
 		printf("Ok starting a write, check logs for result\n");
 	else
@@ -451,15 +494,15 @@ cyon_cli_stats(u_int8_t argc, char **argv)
 
 	op.op = CYON_OP_STATS;
 	net_write32((u_int8_t *)&(op.length), 0);
-	cyon_ssl_write(&op, sizeof(op));
+	cyon_write(&op, sizeof(op));
 
 	memset(&op, 0, sizeof(op));
-	cyon_ssl_read(&op, sizeof(op));
+	cyon_read(&op, sizeof(op));
 	len = net_read32((u_int8_t *)&(op.length));
 	if (op.op != CYON_OP_RESULT_OK || len != sizeof(struct cyon_stats))
 		fatal("Received unexpected result from server");
 
-	cyon_ssl_read(&stats, sizeof(stats));
+	cyon_read(&stats, sizeof(stats));
 	stats.keycount = be64toh(stats.keycount);
 	stats.meminuse = be64toh(stats.meminuse);
 
@@ -492,11 +535,11 @@ cyon_cli_setauth(u_int8_t argc, char **argv)
 	SHA256_Update(&sha256ctx, argv[1], strlen(argv[1]));
 	SHA256_Final((u_char *)p + sizeof(struct cyon_op), &sha256ctx);
 
-	cyon_ssl_write(p, len);
+	cyon_write(p, len);
 	free(p);
 
 	memset(&ret, 0, sizeof(ret));
-	cyon_ssl_read(&ret, sizeof(struct cyon_op));
+	cyon_read(&ret, sizeof(struct cyon_op));
 	if (ret.op == CYON_OP_RESULT_OK)
 		printf("Passphrase was successfully set\n");
 	else
@@ -522,11 +565,11 @@ cyon_cli_replay(u_int8_t argc, char **argv)
 	net_write32((u_int8_t *)&(op->length), SHA_DIGEST_STRING_LEN);
 	memcpy(p + sizeof(struct cyon_op), argv[1], strlen(argv[1]));
 
-	cyon_ssl_write(p, len);
+	cyon_write(p, len);
 	free(p);
 
 	memset(&ret, 0, sizeof(ret));
-	cyon_ssl_read(&ret, sizeof(struct cyon_op));
+	cyon_read(&ret, sizeof(struct cyon_op));
 	if (ret.op == CYON_OP_RESULT_OK)
 		printf("The log was applied successfully, see messages\n");
 	else

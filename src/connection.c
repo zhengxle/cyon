@@ -52,13 +52,22 @@ cyon_connection_accept(struct listener *l)
 {
 	struct thread		*t;
 	struct connection	*c;
+	void			*s;
 	socklen_t		len;
 
 	cyon_debug("cyon_connection_accept(%p)", l);
 
-	len = sizeof(struct sockaddr_in);
 	c = (struct connection *)cyon_malloc(sizeof(*c));
-	if ((c->fd = accept(l->fd, (struct sockaddr *)&(c->sin), &len)) == -1) {
+
+	if (l->type == EVENT_TYPE_INET_SOCKET) {
+		s = &(c->a_sin);
+		len = sizeof(struct sockaddr_in);
+	} else {
+		s = &(c->a_sun);
+		len = sizeof(struct sockaddr_un);
+	}
+
+	if ((c->fd = accept(l->fd, (struct sockaddr *)s, &len)) == -1) {
 		cyon_mem_free(c);
 		cyon_debug("accept(): %s", errno_s);
 		return (CYON_RESULT_ERROR);
@@ -82,14 +91,17 @@ cyon_connection_accept(struct listener *l)
 	c->type = EVENT_TYPE_CONNECTION;
 	c->idle_timer.length = idle_timeout;
 
-	if (l->type == EVENT_TYPE_INET_SOCKET)
-		c->state = CONN_STATE_SSL_SHAKE;
-	else
-		c->state = CONN_STATE_ESTABLISHED;
-
 	TAILQ_INIT(&(c->send_queue));
 	TAILQ_INIT(&(c->recv_queue));
 	TAILQ_INSERT_TAIL(&(t->nctx.clients), c, list);
+
+	if (l->type == EVENT_TYPE_INET_SOCKET) {
+		c->state = CONN_STATE_SSL_SHAKE;
+	} else {
+		c->state = CONN_STATE_ESTABLISHED;
+		net_recv_queue(c, sizeof(struct cyon_op), NETBUF_USE_OPPOOL,
+		    NULL, cyon_connection_recv_op);
+	}
 
 	cyon_connection_start_idletimer(c);
 	cyon_platform_event_schedule(&(t->nctx), c->fd,
@@ -518,11 +530,8 @@ cyon_connection_recv_auth(struct netbuf *nb)
 	passphrase = nb->buf + sizeof(struct cyon_op);
 
 	if ((store_passphrase == NULL && klen != 0) ||
-	    (store_passphrase != NULL && klen == 0)) {
-		cyon_log(LOG_NOTICE, "botched authentication request from %s",
-		    inet_ntoa(c->sin.sin_addr));
+	    (store_passphrase != NULL && klen == 0))
 		return (CYON_RESULT_ERROR);
-	}
 
 	net_write32((u_int8_t *)&(ret.length), 0);
 
@@ -541,8 +550,6 @@ cyon_connection_recv_auth(struct netbuf *nb)
 		c->flags |= CONN_AUTHENTICATED;
 	} else {
 		ret.op = CYON_OP_RESULT_ERROR;
-		cyon_log(LOG_NOTICE, "failed authentication from %s",
-		    inet_ntoa(c->sin.sin_addr));
 	}
 
 	cyon_store_unlock();
@@ -568,11 +575,8 @@ cyon_connection_recv_setauth(struct netbuf *nb)
 	klen = net_read32((u_int8_t *)&(op->length));
 	hash = nb->buf + sizeof(struct cyon_op);
 
-	if (klen != SHA256_DIGEST_LENGTH) {
-		cyon_log(LOG_NOTICE, "botched setauth packet from %s",
-		    inet_ntoa(c->sin.sin_addr));
+	if (klen != SHA256_DIGEST_LENGTH)
 		return (CYON_RESULT_ERROR);
-	}
 
 	cyon_store_lock(1);
 
@@ -646,11 +650,8 @@ cyon_connection_recv_replay(struct netbuf *nb)
 
 	op = (struct cyon_op *)nb->buf;
 	slen = net_read32((u_int8_t *)&(op->length));
-	if (slen != SHA_DIGEST_STRING_LEN) {
-		cyon_log(LOG_NOTICE, "botched replay request from %s",
-		    inet_ntoa(c->sin.sin_addr));
+	if (slen != SHA_DIGEST_STRING_LEN)
 		return (CYON_RESULT_ERROR);
-	}
 
 	state = (char *)(nb->buf + sizeof(struct cyon_op));
 
