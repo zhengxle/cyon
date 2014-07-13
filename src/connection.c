@@ -107,6 +107,9 @@ cyon_connection_accept(struct listener *l)
 	cyon_platform_event_schedule(&(t->nctx), c->fd,
 	    EPOLLIN | EPOLLOUT | EPOLLET, 0, c);
 
+	if (store_passphrase == NULL)
+		c->flags |= CONN_AUTHENTICATED;
+
 	return (CYON_RESULT_OK);
 }
 
