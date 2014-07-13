@@ -31,6 +31,9 @@
 
 #include "cyon.h"
 
+#define errno_s			strerror(errno)
+#define ssl_errno_s		ERR_error_string(ERR_get_error(), NULL)
+
 void		usage(void);
 void		cyon_connect(void);
 void		cyon_ssl_init(void);
@@ -141,22 +144,14 @@ main(int argc, char *argv[])
 		net_write32((u_int8_t *)&(op->length), slen);
 		memcpy(p + sizeof(struct cyon_op), input, slen);
 		memset(input, '\0', slen);
-	} else {
-		len = sizeof(struct cyon_op);
-		if ((p = malloc(len)) == NULL)
-			fatal("malloc(): %s", errno_s);
 
-		op = (struct cyon_op *)p;
-		op->op = CYON_OP_AUTH;
-		net_write32((u_int8_t *)&(op->length), 0);
+		cyon_write(p, len);
+		free(p);
+
+		cyon_read(&ret, sizeof(struct cyon_op));
+		if (ret.op != CYON_OP_RESULT_OK)
+			fatal("access denied");
 	}
-
-	cyon_write(p, len);
-	free(p);
-
-	cyon_read(&ret, sizeof(struct cyon_op));
-	if (ret.op != CYON_OP_RESULT_OK)
-		fatal("access denied");
 
 	for (i = 0; cmds[i].cmd != NULL; i++) {
 		if (strcmp(cmds[i].cmd, argv[0]))
@@ -415,11 +410,10 @@ cyon_cli_upload(u_int8_t argc, char **argv)
 	if (r != size)
 		fatal("could not read from '%s'", argv[2]);
 
-	if (cyon_upload(id,
-	    (u_int8_t *)argv[1], strlen(argv[1]), d, size))
+	if (cyon_upload(id, (u_int8_t *)argv[1], strlen(argv[1]), d, size))
 		printf("OK.\n");
 	else
-		fatal("The key was not added successfully.");
+		fatal("The key was not added successfully");
 
 	free(d);
 	close(fd);

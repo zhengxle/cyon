@@ -403,7 +403,7 @@ cyon_connection_recv_put(struct netbuf *nb)
 	flags = 0;
 	cyon_store_lock(1);
 
-	if (cyon_store_put(key, klen, data, dlen, flags))
+	if (cyon_store_put(key, klen, data, dlen, flags, &(ret.error)))
 		ret.op = CYON_OP_RESULT_OK;
 	else
 		ret.op = CYON_OP_RESULT_ERROR;
@@ -434,7 +434,7 @@ cyon_connection_recv_get(struct netbuf *nb)
 
 	cyon_store_lock(0);
 
-	if (cyon_store_get(key, klen, &data, &dlen)) {
+	if (cyon_store_get(key, klen, &data, &dlen, &(ret.error))) {
 		ret.op = CYON_OP_RESULT_OK;
 		net_write32((u_int8_t *)&(ret.length), dlen);
 
@@ -473,7 +473,7 @@ cyon_connection_recv_del(struct netbuf *nb)
 
 	cyon_store_lock(1);
 
-	if (cyon_store_del(key, klen))
+	if (cyon_store_del(key, klen, &(ret.error)))
 		ret.op = CYON_OP_RESULT_OK;
 	else
 		ret.op = CYON_OP_RESULT_ERROR;
@@ -506,7 +506,7 @@ cyon_connection_recv_replace(struct netbuf *nb)
 
 	cyon_store_lock(1);
 
-	if (cyon_store_replace(key, klen, data, dlen))
+	if (cyon_store_replace(key, klen, data, dlen, &(ret.error)))
 		ret.op = CYON_OP_RESULT_OK;
 	else
 		ret.op = CYON_OP_RESULT_ERROR;

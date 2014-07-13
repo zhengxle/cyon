@@ -211,18 +211,25 @@ cyon_store_unlock(void)
 }
 
 int
-cyon_store_get(u_int8_t *key, u_int32_t len, u_int8_t **out, u_int32_t *olen)
+cyon_store_get(u_int8_t *key, u_int32_t len, u_int8_t **out,
+    u_int32_t *olen, u_int8_t *err)
 {
 	struct node		*p;
 	struct node_data	*nd;
 	struct disknode		*dn;
 
 	*out = NULL;
-	if ((p = cyon_node_lookup(key, len)) == NULL)
-		return (CYON_RESULT_ERROR);
+	*err = CYON_ERROR_UNKNOWN;
 
-	if (!(p->flags & NODE_FLAG_HASDATA))
+	if ((p = cyon_node_lookup(key, len)) == NULL) {
+		*err = CYON_ERROR_ENOENT;
 		return (CYON_RESULT_ERROR);
+	}
+
+	if (!(p->flags & NODE_FLAG_HASDATA)) {
+		*err = CYON_ERROR_ENOENT;
+		return (CYON_RESULT_ERROR);
+	}
 
 	nd = (struct node_data *)p->region;
 	if (store_mode == CYON_DISK_STORE) {
@@ -241,20 +248,28 @@ cyon_store_get(u_int8_t *key, u_int32_t len, u_int8_t **out, u_int32_t *olen)
 }
 
 int
-cyon_store_del(u_int8_t *key, u_int32_t len)
+cyon_store_del(u_int8_t *key, u_int32_t len, u_int8_t *err)
 {
 	struct node	*p;
 	u_int8_t	*old;
 	u_int32_t	offset, rlen;
 
-	if (!replaying_log && cyon_readonly_mode)
-		return (CYON_RESULT_ERROR);
+	*err = CYON_ERROR_UNKNOWN;
 
-	if ((p = cyon_node_lookup(key, len)) == NULL)
+	if (!replaying_log && cyon_readonly_mode) {
+		*err = CYON_ERROR_READONLY_MODE;
 		return (CYON_RESULT_ERROR);
+	}
 
-	if (!(p->flags & NODE_FLAG_HASDATA))
+	if ((p = cyon_node_lookup(key, len)) == NULL) {
+		*err = CYON_ERROR_ENOENT;
 		return (CYON_RESULT_ERROR);
+	}
+
+	if (!(p->flags & NODE_FLAG_HASDATA)) {
+		*err = CYON_ERROR_ENOENT;
+		return (CYON_RESULT_ERROR);
+	}
 
 	if (!replaying_log && !store_nopersist)
 		cyon_storelog_write(CYON_OP_DEL, key, len, NULL, 0, 0);
@@ -280,7 +295,8 @@ cyon_store_del(u_int8_t *key, u_int32_t len)
 }
 
 int
-cyon_store_replace(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
+cyon_store_replace(u_int8_t *key, u_int32_t len, u_int8_t *data,
+    u_int32_t dlen, u_int8_t *err)
 {
 	struct node		*p;
 	struct node_data	*nd;
@@ -288,14 +304,22 @@ cyon_store_replace(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 	u_int8_t		*old, *odata;
 	u_int32_t		nlen, rlen, offset, olen;
 
-	if (!replaying_log && cyon_readonly_mode)
-		return (CYON_RESULT_ERROR);
+	*err = CYON_ERROR_UNKNOWN;
 
-	if ((p = cyon_node_lookup(key, len)) == NULL)
+	if (!replaying_log && cyon_readonly_mode) {
+		*err = CYON_ERROR_READONLY_MODE;
 		return (CYON_RESULT_ERROR);
+	}
 
-	if (!(p->flags & NODE_FLAG_HASDATA))
+	if ((p = cyon_node_lookup(key, len)) == NULL) {
+		*err = CYON_ERROR_ENOENT;
 		return (CYON_RESULT_ERROR);
+	}
+
+	if (!(p->flags & NODE_FLAG_HASDATA)) {
+		*err = CYON_ERROR_ENOENT;
+		return (CYON_RESULT_ERROR);
+	}
 
 	if (!replaying_log && store_mode == CYON_DISK_STORE) {
 		dn = cyon_diskstore_write(key, len, data, dlen);
@@ -341,7 +365,7 @@ cyon_store_replace(u_int8_t *key, u_int32_t len, u_int8_t *data, u_int32_t dlen)
 
 int
 cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
-    u_int32_t dlen, u_int32_t flags)
+    u_int32_t dlen, u_int32_t flags, u_int8_t *err)
 {
 	struct node		*p;
 	struct node_data	*nd;
@@ -350,13 +374,18 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
 	u_int32_t		base, offset, xlen;
 	u_int8_t		i, idx, *old, *odata;
 
+	*err = CYON_ERROR_UNKNOWN;
+
 	if (len > CYON_KEY_MAX) {
+		*err = CYON_ERROR_KEYLEN_INVALID;
 		cyon_log(LOG_NOTICE, "Attempt to put key > CYON_KEY_MAX");
 		return (CYON_RESULT_ERROR);
 	}
 
-	if (!replaying_log && cyon_readonly_mode)
+	if (!replaying_log && cyon_readonly_mode) {
+		*err = CYON_ERROR_READONLY_MODE;
 		return (CYON_RESULT_ERROR);
+	}
 
 	p = rnode;
 	for (i = 0; i < len; i++) {
@@ -433,8 +462,10 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
 		    ((idx - p->rbase) * sizeof(struct node)));
 	}
 
-	if (p->flags & NODE_FLAG_HASDATA)
+	if (p->flags & NODE_FLAG_HASDATA) {
+		*err = CYON_ERROR_EEXIST;
 		return (CYON_RESULT_ERROR);
+	}
 
 	if (!replaying_log && store_mode == CYON_DISK_STORE) {
 		odata = data;
@@ -738,16 +769,14 @@ cyon_store_current_state(u_int8_t *hash)
 int
 cyon_storelog_replay(char *state, int when)
 {
-	u_int8_t		ch;
 	struct stat		st;
-	u_int8_t		*buf;
 	long			offset;
 	u_int64_t		len, olen;
-	u_int8_t		*key, *data;
 	struct store_log	slog, *plog;
 	u_int64_t		added, removed;
 	char			fpath[MAXPATHLEN], *hex;
 	u_char			hash[SHA_DIGEST_LENGTH];
+	u_int8_t		*buf, err, ch, *key, *data;
 
 	snprintf(fpath, sizeof(fpath),
 	    CYON_LOG_FILE, storepath, storename, state);
@@ -866,14 +895,14 @@ cyon_storelog_replay(char *state, int when)
 			break;
 		case CYON_OP_PUT:
 			if (!cyon_store_put(key, slog.klen,
-			    data, slog.dlen, slog.flags)) {
+			    data, slog.dlen, slog.flags, &err)) {
 				if (when != CYON_REPLAY_REQUEST)
 					fatal("replay failed at this stage?");
 			}
 			added++;
 			break;
 		case CYON_OP_DEL:
-			if (!cyon_store_del(key, slog.klen)) {
+			if (!cyon_store_del(key, slog.klen, &err)) {
 				if (when != CYON_REPLAY_REQUEST)
 					fatal("replay failed at this stage?");
 			}
@@ -881,7 +910,7 @@ cyon_storelog_replay(char *state, int when)
 			break;
 		case CYON_OP_REPLACE:
 			if (!cyon_store_replace(key,
-			    slog.klen, data, slog.dlen)) {
+			    slog.klen, data, slog.dlen, &err)) {
 				if (when != CYON_REPLAY_REQUEST)
 					fatal("replay failed at this stage?");
 			}

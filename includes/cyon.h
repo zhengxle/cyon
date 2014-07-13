@@ -42,12 +42,20 @@
 #define CYON_OP_SETAUTH		6
 #define CYON_OP_DEL		7
 #define CYON_OP_REPLACE		8
-#define CYON_OP_REPLAY		11
+#define CYON_OP_REPLAY		9
 #define CYON_OP_RESULT_OK	200
 #define CYON_OP_RESULT_ERROR	201
 
+/* Error codes. */
+#define CYON_ERROR_UNKNOWN		0
+#define CYON_ERROR_EEXIST		1
+#define CYON_ERROR_ENOENT		2
+#define CYON_ERROR_READONLY_MODE	3
+#define CYON_ERROR_KEYLEN_INVALID	4
+
 struct cyon_op {
 	u_int8_t		op;
+	u_int8_t		error;
 	u_int32_t		length;
 } __attribute__((__packed__));
 
@@ -60,8 +68,6 @@ struct cyon_stats {
 
 #define CYON_RESULT_ERROR	0
 #define CYON_RESULT_OK		1
-#define errno_s			strerror(errno)
-#define ssl_errno_s		ERR_error_string(ERR_get_error(), NULL)
 
 u_int16_t	net_read16(u_int8_t *);
 u_int32_t	net_read32(u_int8_t *);
@@ -71,6 +77,9 @@ void		fatal(const char *, ...);
 
 /* Server stuff only. */
 #if defined(CYON_SERVER)
+
+#define errno_s			strerror(errno)
+#define ssl_errno_s		ERR_error_string(ERR_get_error(), NULL)
 
 #define CYON_DEFAULT_PID	"/tmp/cyon.pid"
 
@@ -82,11 +91,6 @@ void		fatal(const char *, ...);
 #endif
 
 #define CYON_OP_DISK_DATA	150	/* Not an actual network op */
-
-#define STORE_KLEN_OFFSET(b)		((b + sizeof(struct cyon_op)))
-#define STORE_DLEN_OFFSET(b)		((b + sizeof(struct cyon_op) + 4))
-#define STORE_KEY_OFFSET(b)		((b + sizeof(struct cyon_op) + 8))
-#define STORE_DATA_OFFSET(b, s)		((STORE_KEY_OFFSET(b) + s))
 
 #define CYON_KEY_MAX			(USHRT_MAX - 1)
 
@@ -332,14 +336,15 @@ void		cyon_store_init(void);
 pid_t		cyon_store_write(void);
 void		cyon_store_unlock(void);
 void		cyon_store_current_state(u_int8_t *);
-int		cyon_store_del(u_int8_t *, u_int32_t);
+int		cyon_store_del(u_int8_t *, u_int32_t, u_int8_t *);
 int		cyon_store_put(u_int8_t *, u_int32_t, u_int8_t *,
-		    u_int32_t, u_int32_t);
-int		cyon_store_get(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);
+		    u_int32_t, u_int32_t, u_int8_t *);
+int		cyon_store_get(u_int8_t *, u_int32_t, u_int8_t **,
+		    u_int32_t *, u_int8_t *);
 void		cyon_store_getkeys(struct getkeys_ctx *, struct connection *,
 		    u_int8_t *, u_int32_t);
 int		cyon_store_replace(u_int8_t *, u_int32_t,
-		    u_int8_t *, u_int32_t);
+		    u_int8_t *, u_int32_t, u_int8_t *);
 
 void		*pool_get(struct pool *);
 void		pool_put(struct pool *, void *);
