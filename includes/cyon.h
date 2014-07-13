@@ -44,6 +44,11 @@
 #define CYON_OP_DEL		7
 #define CYON_OP_REPLACE		8
 #define CYON_OP_REPLAY		9
+#define CYON_OP_APUT		10
+#define CYON_OP_AGET		11
+#define CYON_OP_ADEL		12
+#define CYON_OP_ACREATE		13
+
 #define CYON_OP_RESULT_OK	200
 #define CYON_OP_RESULT_ERROR	201
 
@@ -53,19 +58,20 @@
 #define CYON_ERROR_ENOENT		2
 #define CYON_ERROR_READONLY_MODE	3
 #define CYON_ERROR_KEYLEN_INVALID	4
+#define CYON_ERROR_INVALID_ARRAY_LEN	5
 
 struct cyon_op {
 	u_int8_t		op;
 	u_int8_t		error;
 	u_int32_t		length;
-} __attribute__((__packed__));
+};
 
 struct cyon_stats {
 	u_int64_t		meminuse;
 	u_int64_t		keycount;
 	u_int8_t		state[SHA_DIGEST_STRING_LEN];
 	u_int8_t		modified;
-} __attribute__((__packed__));
+};
 
 #define CYON_RESULT_ERROR	0
 #define CYON_RESULT_OK		1
@@ -74,6 +80,8 @@ struct cyon_stats {
 #if defined(CYON_SERVER)
 
 #define CYON_DEFAULT_PID	"/tmp/cyon.pid"
+
+#define DEBUG		1
 
 #if defined(DEBUG)
 #define cyon_debug(fmt, ...)		\
@@ -142,13 +150,13 @@ struct pool_region {
 	void			*start;
 
 	LIST_ENTRY(pool_region)	list;
-} __attribute__((__packed__));
+};
 
 struct pool_entry {
 	u_int8_t			state;
 	struct pool_region		*region;
 	LIST_ENTRY(pool_entry)		list;
-} __attribute__((__packed__));
+};
 
 struct pool {
 	u_int32_t		elen;
@@ -160,7 +168,7 @@ struct pool {
 
 	LIST_HEAD(, pool_region)	regions;
 	LIST_HEAD(, pool_entry)		freelist;
-} __attribute__((__packed__));
+};
 
 #define CONN_STATE_UNKNOWN		0
 #define CONN_STATE_SSL_SHAKE		1
@@ -239,6 +247,12 @@ struct getkeys_ctx {
 	u_int32_t			len;
 	u_int32_t			off;
 	u_int32_t			bytes;
+};
+
+struct store_array {
+	u_int32_t			elm;
+	u_int32_t			elen;
+	u_int32_t			count;
 };
 
 extern struct listener		server;

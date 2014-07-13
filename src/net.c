@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include "cyon.h"
+#include "shared.h"
 
 static int		net_send(struct connection *);
 static int		net_recv(struct connection *);

@@ -54,6 +54,7 @@ void		cyon_cli_stats(u_int8_t, char **);
 void		cyon_cli_write(u_int8_t, char **);
 void		cyon_cli_setauth(u_int8_t, char **);
 void		cyon_cli_replay(u_int8_t, char **);
+void		cyon_cli_acreate(u_int8_t, char **);
 
 int		cfd = -1;
 char		*host = NULL;
@@ -73,6 +74,8 @@ struct {
 	{ "set-auth",		cyon_cli_setauth },
 	{ "replace",		cyon_cli_upload },
 	{ "replay",		cyon_cli_replay },
+	{ "acreate",		cyon_cli_acreate },
+	{ "aput",		cyon_cli_upload },
 	{ NULL,		NULL },
 };
 
@@ -387,6 +390,8 @@ cyon_cli_upload(u_int8_t argc, char **argv)
 		id = CYON_OP_PUT;
 	} else if (!strcmp(argv[0], "replace")) {
 		id = CYON_OP_REPLACE;
+	} else if (!strcmp(argv[0], "aput")) {
+		id = CYON_OP_APUT;
 	} else {
 		fatal("invalid request: %s", argv[0]);
 	}
@@ -566,4 +571,40 @@ cyon_cli_replay(u_int8_t argc, char **argv)
 		printf("The log was applied successfully, see messages\n");
 	else
 		fatal("Error while applying the log, see messages");
+}
+
+void
+cyon_cli_acreate(u_int8_t argc, char **argv)
+{
+	u_int8_t		*p;
+	struct cyon_op		*op, ret;
+	u_int32_t		len, off, klen, elm, elen;
+
+	if (argc != 4)
+		fatal("Usage: acreate [key] [elm] [len]");
+
+	klen = strlen(argv[1]);
+	elm = atoi(argv[2]);
+	elen = atoi(argv[3]);
+
+	len = klen + (sizeof(u_int32_t) * 3) + sizeof(struct cyon_op);
+	if ((p = malloc(len)) == NULL)
+		fatal("malloc(): %s", errno_s);
+
+	op = (struct cyon_op *)p;
+	op->op = CYON_OP_ACREATE;
+	net_write32((u_int8_t *)&(op->length), len - sizeof(struct cyon_op));
+
+	off = sizeof(struct cyon_op);
+	net_write32(&p[off], strlen(argv[1]));
+	net_write32(&p[off + 4], elm);
+	net_write32(&p[off + 8], elen);
+	memcpy(&p[off + 12], argv[1], klen);
+
+	cyon_write(p, len);
+	free(p);
+
+	memset(&ret, 0, sizeof(ret));
+	cyon_read(&ret, sizeof(struct cyon_op));
+	printf("done\n");
 }
