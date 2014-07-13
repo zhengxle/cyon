@@ -48,6 +48,7 @@ static struct {
 	{ 'b',	"ip",		"Bind to the given IP address" },
 	{ 'd',	NULL,		"Runs Cyon in disk store mode" },
 	{ 'f',	NULL,		"Runs cyon in foreground mode" },
+	{ 'i',	NULL,		"Idle timeout for connections" },
 	{ 'n',	NULL,		"No data persistence" },
 	{ 'p',	"port",		"Use given port to listen for connections" },
 	{ 'r',	"storedir",	"Directory where all data is stored" },
