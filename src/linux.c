@@ -20,6 +20,7 @@
 #include <sched.h>
 
 #include "cyon.h"
+#include "shared.h"
 
 #define EVENT_COUNT	50
 

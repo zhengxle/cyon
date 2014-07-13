@@ -19,6 +19,7 @@
 #include <pthread.h>
 
 #include "cyon.h"
+#include "shared.h"
 
 u_int16_t
 net_read16(u_int8_t *b)

@@ -30,6 +30,7 @@
 #include <unistd.h>
 
 #include "cyon.h"
+#include "shared.h"
 
 /*
  * This code uses cyon_malloc() and memcpy() quite heavily due to the nature

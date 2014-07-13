@@ -27,6 +27,7 @@
 #include <unistd.h>
 
 #include "cyon.h"
+#include "shared.h"
 
 static void		usage(void);
 static void		cyon_signal(int);

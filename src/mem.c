@@ -19,6 +19,7 @@
 #include <stdlib.h>
 
 #include "cyon.h"
+#include "shared.h"
 
 #define CYON_MEM_MAGIC		0xd0d0
 #define CYON_MEMSIZE(x)		\

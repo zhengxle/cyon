@@ -20,6 +20,7 @@
 #include <pthread.h>
 
 #include "cyon.h"
+#include "shared.h"
 
 #define POOL_ELEMENT_BUSY		0
 #define POOL_ELEMENT_FREE		1

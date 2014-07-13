@@ -27,6 +27,7 @@
 #include <sched.h>
 
 #include "cyon.h"
+#include "shared.h"
 
 static unsigned long	thread_ssl_id(void);
 static void		thread_ssl_lock(int, int, const char *, int);

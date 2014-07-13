@@ -22,6 +22,7 @@
 #include <unistd.h>
 
 #include "cyon.h"
+#include "shared.h"
 
 extern SHA_CTX		shactx;
 

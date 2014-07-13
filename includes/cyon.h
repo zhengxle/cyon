@@ -33,6 +33,7 @@
 #include <syslog.h>
 
 #define SHA_DIGEST_STRING_LEN	((SHA_DIGEST_LENGTH * 2) + 1)
+
 /* Shared server & cli stuff. */
 #define CYON_OP_PUT		1
 #define CYON_OP_GET		2
@@ -69,17 +70,8 @@ struct cyon_stats {
 #define CYON_RESULT_ERROR	0
 #define CYON_RESULT_OK		1
 
-u_int16_t	net_read16(u_int8_t *);
-u_int32_t	net_read32(u_int8_t *);
-void		net_write16(u_int8_t *, u_int16_t);
-void		net_write32(u_int8_t *, u_int32_t);
-void		fatal(const char *, ...);
-
 /* Server stuff only. */
 #if defined(CYON_SERVER)
-
-#define errno_s			strerror(errno)
-#define ssl_errno_s		ERR_error_string(ERR_get_error(), NULL)
 
 #define CYON_DEFAULT_PID	"/tmp/cyon.pid"
 

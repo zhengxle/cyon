@@ -25,6 +25,7 @@
 #include <unistd.h>
 
 #include "cyon.h"
+#include "shared.h"
 
 static int		cyon_connection_recv_op(struct netbuf *);
 static int		cyon_connection_recv_put(struct netbuf *);

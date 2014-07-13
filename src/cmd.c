@@ -30,9 +30,7 @@
 #include <unistd.h>
 
 #include "cyon.h"
-
-#define errno_s			strerror(errno)
-#define ssl_errno_s		ERR_error_string(ERR_get_error(), NULL)
+#include "shared.h"
 
 void		usage(void);
 void		cyon_connect(void);
