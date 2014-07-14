@@ -56,6 +56,7 @@ void		cyon_cli_write(u_int8_t, char **);
 void		cyon_cli_setauth(u_int8_t, char **);
 void		cyon_cli_replay(u_int8_t, char **);
 void		cyon_cli_acreate(u_int8_t, char **);
+void		cyon_cli_stress(u_int8_t, char **);
 
 int		cfd = -1;
 char		*host = NULL;
@@ -78,6 +79,7 @@ struct {
 	{ "acreate",		cyon_cli_acreate },
 	{ "aput",		cyon_cli_upload },
 	{ "aget",		cyon_cli_get },
+	{ "stress",		cyon_cli_stress },
 	{ NULL,		NULL },
 };
 
@@ -645,4 +647,29 @@ cyon_cli_acreate(u_int8_t argc, char **argv)
 	memset(&ret, 0, sizeof(ret));
 	cyon_read(&ret, sizeof(struct cyon_op));
 	printf("done\n");
+}
+
+void
+cyon_cli_stress(u_int8_t argc, char **argv)
+{
+	int		i, kps;
+	char		key[17];
+	time_t		now, last;
+
+	last = 0;
+	for (i = 0; i < 1000000; i++) {
+		time(&now);
+		if (now - last > 1) {
+			last = now;
+			printf("%d kps\n", kps);
+			kps = 0;
+		}
+
+		snprintf(key, sizeof(key), "%16d", i);
+		if (!cyon_upload(CYON_OP_PUT, (u_int8_t *)key,
+		    16, (u_int8_t *)"mydata", 6))
+			fatal("borked");
+
+		kps++;
+	}
 }
