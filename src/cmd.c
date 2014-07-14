@@ -43,7 +43,8 @@ void		cyon_write(void *, u_int32_t);
 void		cyon_read(void *, u_int32_t);
 
 int		cyon_del(u_int8_t *, u_int32_t);
-int		cyon_get(u_int8_t *, u_int32_t, u_int8_t **, u_int32_t *);
+int		cyon_get(u_int8_t, u_int8_t *, u_int32_t, u_int8_t **,
+		    u_int32_t *, u_int32_t, u_int32_t);
 int		cyon_upload(u_int8_t, u_int8_t *,
 		    u_int32_t, u_int8_t *, u_int32_t);
 
@@ -76,6 +77,7 @@ struct {
 	{ "replay",		cyon_cli_replay },
 	{ "acreate",		cyon_cli_acreate },
 	{ "aput",		cyon_cli_upload },
+	{ "aget",		cyon_cli_get },
 	{ NULL,		NULL },
 };
 
@@ -330,28 +332,50 @@ cyon_upload(u_int8_t id, u_int8_t *key, u_int32_t klen,
 }
 
 int
-cyon_get(u_int8_t *key, u_int32_t klen, u_int8_t **out, u_int32_t *dlen)
+cyon_get(u_int8_t type, u_int8_t *key, u_int32_t klen, u_int8_t **out,
+    u_int32_t *dlen, u_int32_t start, u_int32_t end)
 {
-	struct cyon_op		op;
+	u_int8_t		*p;
+	struct cyon_op		*op, ret;
+	u_int32_t		plen, off;
 
-	op.op = CYON_OP_GET;
-	net_write32((u_int8_t *)&(op.length), klen);
+	if (type == CYON_OP_AGET) {
+		plen = klen + (sizeof(u_int32_t) * 3);
+	} else {
+		plen = klen;
+	}
 
-	cyon_write(&op, sizeof(op));
-	cyon_write(key, klen);
+	if ((p = malloc(plen + sizeof(struct cyon_op))) == NULL)
+		fatal("malloc(): %s", errno_s);
+
+	op = (struct cyon_op *)p;
+	op->op = type;
+	net_write32((u_int8_t *)&(op->length), plen);
+
+	off = sizeof(struct cyon_op);
+	if (type == CYON_OP_AGET) {
+		net_write32(&p[off], klen);
+		net_write32(&p[off + 4], start);
+		net_write32(&p[off + 8], end);
+		off += 12;
+	}
+
+	memcpy(&p[off], key, klen);
+
+	cyon_write(p, plen + sizeof(struct cyon_op));
 
 	*dlen = 0;
 	*out = NULL;
 
-	memset(&op, 0, sizeof(op));
-	cyon_read(&op, sizeof(op));
-	if (op.op == CYON_OP_RESULT_OK) {
-		*dlen = net_read32((u_int8_t *)&(op.length));
+	memset(&ret, 0, sizeof(ret));
+	cyon_read(&ret, sizeof(ret));
+	if (ret.op == CYON_OP_RESULT_OK) {
+		*dlen = net_read32((u_int8_t *)&(ret.length));
 		if ((*out = malloc(*dlen)) == NULL)
 			fatal("malloc(): %s", errno_s);
 		cyon_read(*out, *dlen);
-	} else if (op.op != CYON_OP_RESULT_ERROR) {
-		fatal("Unexpected result from server: %d", op.op);
+	} else if (ret.op != CYON_OP_RESULT_ERROR) {
+		fatal("Unexpected result from server: %d", ret.op);
 	}
 
 	return (*out != NULL);
@@ -427,13 +451,27 @@ cyon_cli_get(u_int8_t argc, char **argv)
 {
 	ssize_t		r;
 	int		fd;
-	u_int32_t	dlen;
-	u_int8_t	*data;
+	u_int8_t	*data, type;
+	u_int32_t	dlen, start, end;
 
-	if (argc != 3)
-		fatal("get [key] [outfile]\n");
+	if (!strcmp(argv[0], "aget")) {
+		if (argc != 5)
+			fatal("aget [key] [outfile] [start] [end]");
 
-	if (cyon_get((u_int8_t *)argv[1], strlen(argv[1]), &data, &dlen)) {
+		type = CYON_OP_AGET;
+		end = atoi(argv[4]);
+		start = atoi(argv[3]);
+	} else {
+		if (argc != 3)
+			fatal("get [key] [outfile]");
+
+		end = 0;
+		start = 0;
+		type = CYON_OP_GET;
+	}
+
+	if (cyon_get(type, (u_int8_t *)argv[1], strlen(argv[1]),
+	    &data, &dlen, start, end)) {
 		printf("Received %d bytes of data\n", dlen);
 
 		fd = open(argv[2], O_CREAT | O_TRUNC | O_WRONLY, 0700);

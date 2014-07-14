@@ -366,6 +366,7 @@ cyon_connection_recv_op(struct netbuf *nb)
 		r = net_recv_expand(c, nb, len, cyon_connection_recv_aput);
 		break;
 	case CYON_OP_AGET:
+		r = net_recv_expand(c, nb, len, cyon_connection_recv_aget);
 		break;
 	case CYON_OP_ADEL:
 		break;
@@ -403,29 +404,6 @@ cyon_connection_recv_op(struct netbuf *nb)
 	    NULL, cyon_connection_recv_op);
 
 	return (r);
-}
-
-static int
-cyon_connection_recv_put(struct netbuf *nb)
-{
-	struct cyon_op		ret;
-	u_int32_t		dlen, klen;
-	u_int8_t		*key, *data;
-	struct connection	*c = (struct connection *)nb->owner;
-
-	if (!connection_extract_data(nb, &klen, &dlen, &key, &data))
-		return (CYON_RESULT_ERROR);
-
-	cyon_store_lock(1);
-	if (cyon_store_put(key, klen, data, dlen, 0, &(ret.error)))
-		ret.op = CYON_OP_RESULT_OK;
-	else
-		ret.op = CYON_OP_RESULT_ERROR;
-	cyon_store_unlock();
-
-	ret.length = 0;
-	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);
-	return (net_send_flush(c));
 }
 
 static int
@@ -504,8 +482,7 @@ cyon_connection_recv_aput(struct netbuf *nb)
 				ar->elm++;
 			}
 
-			ar->count++;
-			off = (ar->count * ar->elen);
+			off = (ar->count++ * ar->elen);
 			off += sizeof(struct store_array);
 			memcpy(p + off, data, dlen);
 
@@ -521,7 +498,100 @@ cyon_connection_recv_aput(struct netbuf *nb)
 	}
 
 	cyon_store_unlock();
-	printf("ret: %d - error: %d\n", ret.op, ret.error);
+
+	ret.length = 0;
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);
+	return (net_send_flush(c));
+}
+
+static int
+cyon_connection_recv_aget(struct netbuf *nb)
+{
+	struct store_array	*ar;
+	struct cyon_op		ret;
+	u_int8_t		*key, *p, *data;
+	u_int32_t		klen, start, end, plen, dlen;
+	struct connection	*c = (struct connection *)nb->owner;
+
+	klen = CYON_OP_READ(net_read32, nb, 0);
+	start = CYON_OP_READ(net_read32, nb, sizeof(u_int32_t));
+	end = CYON_OP_READ(net_read32, nb, (sizeof(u_int32_t) * 2));
+
+	if ((int)klen <= 0 || (int)start < 0 || (int)end < 0) {
+		cyon_debug("klen: %d - start: %d - end: %d", klen, start, end);
+		return (CYON_RESULT_ERROR);
+	}
+
+	key = nb->buf + sizeof(struct cyon_op) + (sizeof(u_int32_t) * 3);
+	cyon_debug("fetching %d-%d from %.*s", start, end, klen, key);
+
+	cyon_store_lock(0);
+	if (cyon_store_get(key, klen, &p, &plen, &(ret.error))) {
+		dlen = 0;
+		data = NULL;
+
+		ar = (struct store_array *)p;
+		p += sizeof(struct store_array);
+		plen -= sizeof(struct store_array);
+
+		if (end > ar->count || start >= ar->count) {
+			ret.op = CYON_OP_RESULT_ERROR;
+			ret.error = CYON_ERROR_INVALID_OFFSET;
+		} else if (start == 0 && end == 0) {
+			data = p;
+			dlen = ar->count * ar->elen;
+		} else if (start > 0 && end == 0) {
+			data = p + (start * ar->elen);
+			dlen = (ar->count * ar->elen) - (start * ar->elen);
+		} else if (start == 0 && end > 0) {
+			data = p;
+			dlen = end * ar->elen;
+		} else if (start < end) {
+			data = p + (start * ar->elen);
+			dlen = (end * ar->elen) - (start * ar->elen);
+		} else if (start == end) {
+			data = p + (start * ar->elen);
+			dlen = ar->elen;
+		} else {
+			ret.op = CYON_OP_RESULT_ERROR;
+			ret.error = CYON_ERROR_INVALID_OFFSET;
+		}
+
+		if (data != NULL)
+			ret.op = CYON_OP_RESULT_OK;
+
+		net_write32((u_int8_t *)&(ret.length), dlen);
+		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);
+		if (data != NULL)
+			net_send_queue(c, data, dlen, 0);
+	} else {
+		ret.length = 0;
+		ret.op = CYON_OP_RESULT_ERROR;
+		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);
+	}
+
+	cyon_store_unlock();
+
+	return (net_send_flush(c));
+}
+
+static int
+cyon_connection_recv_put(struct netbuf *nb)
+{
+	struct cyon_op		ret;
+	u_int32_t		dlen, klen;
+	u_int8_t		*key, *data;
+	struct connection	*c = (struct connection *)nb->owner;
+
+	if (!connection_extract_data(nb, &klen, &dlen, &key, &data))
+		return (CYON_RESULT_ERROR);
+
+	cyon_store_lock(1);
+	if (cyon_store_put(key, klen, data, dlen, 0, &(ret.error)))
+		ret.op = CYON_OP_RESULT_OK;
+	else
+		ret.op = CYON_OP_RESULT_ERROR;
+	cyon_store_unlock();
 
 	ret.length = 0;
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);

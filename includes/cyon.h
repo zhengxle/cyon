@@ -59,6 +59,7 @@
 #define CYON_ERROR_READONLY_MODE	3
 #define CYON_ERROR_KEYLEN_INVALID	4
 #define CYON_ERROR_INVALID_ARRAY_LEN	5
+#define CYON_ERROR_INVALID_OFFSET	6
 
 struct cyon_op {
 	u_int8_t		op;
