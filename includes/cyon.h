@@ -242,13 +242,6 @@ struct thread {
 	struct netcontext		nctx;
 };
 
-struct getkeys_ctx {
-	u_int8_t			*key;
-	u_int32_t			len;
-	u_int32_t			off;
-	u_int32_t			bytes;
-};
-
 struct store_array {
 	u_int32_t			elm;
 	u_int32_t			elen;
@@ -347,8 +340,6 @@ int		cyon_store_put(u_int8_t *, u_int32_t, u_int8_t *,
 		    u_int32_t, u_int32_t, u_int8_t *);
 int		cyon_store_get(u_int8_t *, u_int32_t, u_int8_t **,
 		    u_int32_t *, u_int8_t *);
-void		cyon_store_getkeys(struct getkeys_ctx *, struct connection *,
-		    u_int8_t *, u_int32_t);
 int		cyon_store_replace(u_int8_t *, u_int32_t,
 		    u_int8_t *, u_int32_t, u_int8_t *);
 
