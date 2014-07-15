@@ -50,6 +50,7 @@ static struct {
 	{ 'd',	NULL,		"Runs Cyon in disk store mode" },
 	{ 'f',	NULL,		"Runs cyon in foreground mode" },
 	{ 'i',	NULL,		"Idle timeout for connections" },
+	{ 'l',	NULL,		"Retain store log files" },
 	{ 'n',	NULL,		"No data persistence" },
 	{ 'p',	"port",		"Use given port to listen for connections" },
 	{ 'r',	"storedir",	"Directory where all data is stored" },
