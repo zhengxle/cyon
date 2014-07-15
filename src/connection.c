@@ -107,7 +107,10 @@ cyon_connection_accept(struct listener *l)
 
 	TAILQ_INIT(&(c->send_queue));
 	TAILQ_INIT(&(c->recv_queue));
+
+	pthread_mutex_lock(&(t->lock));
 	TAILQ_INSERT_TAIL(&(t->nctx.clients), c, list);
+	pthread_mutex_unlock(&(t->lock));
 
 	if (l->type == EVENT_TYPE_INET_SOCKET) {
 		c->state = CONN_STATE_SSL_SHAKE;
@@ -251,6 +254,7 @@ cyon_connection_check_idletimer(u_int64_t now)
 	struct connection	*c;
 	struct thread		*t = THREAD_VAR(thread);
 
+	pthread_mutex_lock(&(t->lock));
 	TAILQ_FOREACH(c, &(t->nctx.clients), list) {
 		d = now - c->idle_timer.start;
 		if (d >= c->idle_timer.length) {
@@ -258,6 +262,7 @@ cyon_connection_check_idletimer(u_int64_t now)
 			cyon_connection_disconnect(c);
 		}
 	}
+	pthread_mutex_unlock(&(t->lock));
 }
 
 void
@@ -694,6 +699,7 @@ cyon_connection_recv_replace(struct netbuf *nb)
 static int
 cyon_connection_recv_auth(struct netbuf *nb)
 {
+	struct thread		*t;
 	u_int32_t		klen;
 	struct cyon_op		*op, ret;
 	SHA256_CTX		sha256ctx;
@@ -733,7 +739,11 @@ cyon_connection_recv_auth(struct netbuf *nb)
 	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);
 	if (ret.op != CYON_OP_RESULT_OK) {
 		net_send_flush(c);
+
+		t = (struct thread *)c->owner;
+		pthread_mutex_lock(&(t->lock));
 		cyon_connection_disconnect(c);
+		pthread_mutex_unlock(&(t->lock));
 	}
 
 	return (net_send_flush(c));

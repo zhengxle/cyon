@@ -57,7 +57,8 @@ cyon_threads_init(void)
 	t = threads = cyon_malloc(thread_count * sizeof(struct thread));
 	for (i = 0; i < thread_count; i++) {
 		t->id = i;
-		t++->quit = 0;
+		t->quit = 0;
+		pthread_mutex_init(&(t++->lock), NULL);
 	}
 
 	t_offset = 0;

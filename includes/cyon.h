@@ -241,6 +241,7 @@ struct thread {
 	pthread_t			tid;
 	u_int8_t			quit;
 	struct netcontext		nctx;
+	pthread_mutex_t			lock;
 };
 
 struct store_array {
