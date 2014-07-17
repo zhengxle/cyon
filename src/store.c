@@ -77,35 +77,17 @@ struct store_log {
 	u_int32_t	flags;
 } __attribute__((__packed__));
 
-struct disknode {
-	u_int8_t	magic[4];
-	u_int8_t	hash[SHA_DIGEST_LENGTH];
-	u_int8_t	state[SHA_DIGEST_LENGTH];
-	u_int16_t	didx;
-	u_int32_t	klen;
-	u_int32_t	dlen;
-	u_int64_t	offset;
-} __attribute__((__packed__));
-
 static void		cyon_store_map(void);
-static void		cyon_diskstore_open(void);
 static void		cyon_storelog_replay_all(void);
 static void		cyon_store_mapnode(int, struct node *);
 static struct node	*cyon_node_lookup(u_int8_t *, u_int32_t);
 static void		cyon_store_writenode(int, struct node *, u_int8_t *,
 			    u_int32_t, u_int32_t *, SHA_CTX *);
-static struct disknode	*cyon_diskstore_write(u_int8_t *, u_int32_t,
-			    u_int8_t *, u_int32_t);
-static int		cyon_diskstore_read(struct disknode *, u_int8_t **,
-			    u_int32_t *);
-static int		cyon_diskstore_create(u_int8_t *, u_int32_t,
-			    u_int8_t *, u_int32_t);
 
 SHA_CTX			shactx;
 u_int64_t		key_count;
 char			*storepath;
 char			*storename;
-u_int8_t		store_mode;
 u_int8_t		store_nopersist;
 u_char			*store_passphrase;
 u_int8_t		store_retain_logs;
@@ -115,15 +97,12 @@ u_int8_t		store_state[SHA_DIGEST_LENGTH];
 static int		lfd;
 static int		dfd;
 static struct node	*rnode;
-static pthread_mutex_t	disk_lock;
 static pthread_rwlock_t	store_lock;
 static u_int32_t	store_errors;
-static u_int64_t	store_ds_offset;
 static u_int8_t		store_validation;
 static u_int64_t	store_log_offset;
 static u_int8_t		replaying_log = 0;
 static u_int8_t		log_modified = 0;
-static u_int8_t		disk_modified = 0;
 
 void
 cyon_store_init(void)
@@ -141,11 +120,7 @@ cyon_store_init(void)
 	SHA_Init(&shactx);
 	SHA_Final(store_state, &shactx);
 
-	pthread_mutex_init(&disk_lock, NULL);
 	pthread_rwlock_init(&store_lock, NULL);
-
-	if (store_mode == CYON_DISK_STORE)
-		cyon_diskstore_open();
 	cyon_store_map();
 
 	if (rnode == NULL) {
@@ -168,9 +143,8 @@ cyon_store_init(void)
 		cyon_storelog_reopen(0);
 
 	if (store_errors) {
-		cyon_log(LOG_NOTICE,
-		    "YOU HAVE INCONSISTENCIES IN YOUR STORE/DISK "
-		    "DATA/LOG FILES, THESE MUST BE REPAIRED. FORCING READONLY");
+		cyon_log(LOG_ERR, "INCONSISTENCIES IN STORE LOG/DATA FILE");
+		cyon_log(LOG_ERR, "THESE MUST BE REPAIRED. FORCING READONLY");
 		cyon_readonly_mode = 1;
 	}
 
@@ -217,7 +191,6 @@ cyon_store_get(u_int8_t *key, u_int32_t len, u_int8_t **out,
 {
 	struct node		*p;
 	struct node_data	*nd;
-	struct disknode		*dn;
 
 	*out = NULL;
 	*err = CYON_ERROR_UNKNOWN;
@@ -233,17 +206,8 @@ cyon_store_get(u_int8_t *key, u_int32_t len, u_int8_t **out,
 	}
 
 	nd = (struct node_data *)p->region;
-	if (store_mode == CYON_DISK_STORE) {
-		if (nd->size != sizeof(struct disknode))
-			fatal("nd->size != sizeof(struct disknode)");
-
-		dn = (struct disknode *)(p->region + sizeof(struct node_data));
-		if (!cyon_diskstore_read(dn, out, olen))
-			return (CYON_RESULT_ERROR);
-	} else {
-		*olen = nd->size;
-		*out = p->region + sizeof(struct node_data);
-	}
+	*olen = nd->size;
+	*out = p->region + sizeof(struct node_data);
 
 	return (CYON_RESULT_OK);
 }
@@ -301,9 +265,8 @@ cyon_store_replace(u_int8_t *key, u_int32_t len, u_int8_t *data,
 {
 	struct node		*p;
 	struct node_data	*nd;
-	struct disknode		*dn;
-	u_int8_t		*old, *odata;
-	u_int32_t		nlen, rlen, offset, olen;
+	u_int8_t		*old;
+	u_int32_t		nlen, rlen, offset;
 
 	*err = CYON_ERROR_UNKNOWN;
 
@@ -322,22 +285,8 @@ cyon_store_replace(u_int8_t *key, u_int32_t len, u_int8_t *data,
 		return (CYON_RESULT_ERROR);
 	}
 
-	if (!replaying_log && store_mode == CYON_DISK_STORE) {
-		dn = cyon_diskstore_write(key, len, data, dlen);
-
-		odata = data;
-		olen = dlen;
-		data = (u_int8_t *)dn;
-		dlen = sizeof(*dn);
-	}
-
-	if (!replaying_log && !store_nopersist) {
+	if (!replaying_log && !store_nopersist)
 		cyon_storelog_write(CYON_OP_REPLACE, key, len, data, dlen, 0);
-		if (store_mode == CYON_DISK_STORE) {
-			cyon_storelog_write(CYON_OP_DISK_DATA,
-			    key, len, odata, olen, 0);
-		}
-	}
 
 	old = p->region;
 	if (p->rbase == 0 && p->rtop == 0) {
@@ -370,10 +319,9 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
 {
 	struct node		*p;
 	struct node_data	*nd;
-	struct disknode		*dn;
 	size_t			olen, rlen;
-	u_int32_t		base, offset, xlen;
-	u_int8_t		i, idx, *old, *odata;
+	u_int32_t		base, offset;
+	u_int8_t		i, idx, *old;
 
 	*err = CYON_ERROR_UNKNOWN;
 
@@ -468,25 +416,10 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
 		return (CYON_RESULT_ERROR);
 	}
 
-	if (!replaying_log && store_mode == CYON_DISK_STORE) {
-		odata = data;
-		xlen = dlen;
-
-		dn = cyon_diskstore_write(key, len, data, dlen);
-		data = (u_int8_t *)dn;
-		dlen = sizeof(*dn);
-	}
-
-	if (!replaying_log && !store_nopersist) {
+	if (!replaying_log && !store_nopersist)
 		cyon_storelog_write(CYON_OP_PUT, key, len, data, dlen, flags);
-		if (store_mode == CYON_DISK_STORE) {
-			cyon_storelog_write(CYON_OP_DISK_DATA,
-			    key, len, odata, xlen, 0);
-		}
-	}
 
 	old = p->region;
-
 	if (old != NULL) {
 		NODE_REGION_RANGE(olen, p);
 		rlen = dlen + olen;
@@ -515,46 +448,26 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
 }
 
 void
-cyon_store_flush(int what)
+cyon_store_flush(void)
 {
-	int		fd;
 	int		ret;
 
 	if (cyon_readonly_mode || store_nopersist)
 		return;
 
-	switch (what) {
-	case CYON_STOREFLUSH_LOG:
-		if (log_modified == 0)
-			return;
-		fd = lfd;
-		break;
-	case CYON_STOREFLUSH_DISK:
-		if (disk_modified == 0)
-			return;
-		fd = dfd;
-		break;
-	default:
-		cyon_log(LOG_WARNING,
-		    "what unspecified in cyon_store_flush: %d", what);
+	if (log_modified == 0)
 		return;
-	}
 
 	for (;;) {
-		ret = fsync(fd);
+		ret = fsync(lfd);
 		if (ret == -1 && errno == EINTR)
 			continue;
-		if (ret == -1) {
-			cyon_log(LOG_WARNING,
-			    "store sync failed (%d): %s", what, errno_s);
-		}
+		if (ret == -1)
+			fatal("store sync failed: %s", errno_s);
 		break;
 	}
 
-	if (what == CYON_STOREFLUSH_LOG)
-		log_modified = 0;
-	else if (what == CYON_STOREFLUSH_DISK)
-		disk_modified = 0;
+	log_modified = 0;
 }
 
 void
@@ -565,7 +478,7 @@ cyon_storelog_reopen(int wrlog)
 	char		fpath[MAXPATHLEN], *hex;
 
 	if (lfd != -1) {
-		cyon_store_flush(CYON_STOREFLUSH_LOG);
+		cyon_store_flush();
 		close(lfd);
 	}
 
@@ -636,11 +549,8 @@ cyon_store_write(void)
 		return (pid);
 	}
 
-	if (!cyon_readonly_mode) {
+	if (!cyon_readonly_mode)
 		close(lfd);
-		if (store_mode == CYON_DISK_STORE)
-			close(dfd);
-	}
 
 	snprintf(fpath, sizeof(fpath), CYON_STORE_FILE, storepath, storename);
 	snprintf(tpath, sizeof(tpath), CYON_STORE_TMPFILE,
@@ -916,13 +826,6 @@ cyon_storelog_replay(char *state, int when)
 					fatal("replay failed at this stage?");
 			}
 			break;
-		case CYON_OP_DISK_DATA:
-			if (!cyon_diskstore_create(key,
-			    slog.klen, data, slog.dlen)) {
-				cyon_log(LOG_NOTICE, "disk data with no node");
-				store_errors++;
-			}
-			break;
 		default:
 			store_errors++;
 			printf("unknown log operation %d", slog.op);
@@ -1104,10 +1007,7 @@ cyon_store_mapnode(int fd, struct node *p)
 {
 	struct node_data	nd;
 	struct node		*np;
-	struct disknode		*dn;
-	char			*hex;
-	u_int8_t		*data;
-	u_int32_t		rlen, i, offset, len;
+	u_int32_t		rlen, i, offset;
 
 	if (p->rbase > p->rtop)
 		fatal("corruption in store detected");
@@ -1132,20 +1032,6 @@ cyon_store_mapnode(int fd, struct node *p)
 		cyon_atomic_read(fd, p->region + sizeof(struct node_data),
 		    rlen - sizeof(struct node_data), &shactx, 0);
 		offset = nd.size + sizeof(struct node_data);
-
-		/* Verify the disk node data by issuing a read. */
-		if (store_mode == CYON_DISK_STORE) {
-			dn = (struct disknode *)(p->region + sizeof(nd));
-			if (cyon_diskstore_read(dn, &data, &len)) {
-				cyon_mem_free(data);
-			} else {
-				store_errors++;
-				cyon_sha_hex(dn->state, &hex);
-				cyon_log(LOG_NOTICE,
-				    "DISK DATA MISSING FROM %s", hex);
-				cyon_mem_free(hex);
-			}
-		}
 	} else {
 		offset = 0;
 		if (p->rbase != 0 || p->rtop != 0) {
@@ -1199,187 +1085,4 @@ cyon_node_lookup(u_int8_t *key, u_int32_t len)
 	}
 
 	return (p);
-}
-
-static void
-cyon_diskstore_open(void)
-{
-	struct stat	st;
-	int		flags;
-	char		fpath[MAXPATHLEN];
-
-	snprintf(fpath, sizeof(fpath), CYON_STORE_DSFILE, storepath, storename);
-
-	flags = O_CREAT | O_APPEND | O_RDWR;
-	if (store_always_sync)
-		flags |= O_SYNC;
-
-	dfd = open(fpath, flags, 0700);
-	if (dfd == -1)
-		fatal("could not open dsfile: %s", fpath);
-	if (fstat(dfd, &st) == -1)
-		fatal("fstat(dfd): %s", errno_s);
-
-	store_ds_offset = st.st_size;
-	cyon_log(LOG_NOTICE, "disk store opened at %ld", store_ds_offset);
-}
-
-static struct disknode *
-cyon_diskstore_write(u_int8_t *key, u_int32_t klen, u_int8_t *d, u_int32_t dlen)
-{
-	u_int32_t		len;
-	struct disknode		*dn;
-	SHA_CTX			sctx;
-	u_int8_t		*buf, *p;
-
-	len = sizeof(struct disknode) + klen + dlen;
-	buf = cyon_malloc(len);
-
-	pthread_mutex_lock(&disk_lock);
-
-	dn = (struct disknode *)buf;
-	memset(dn, 0, sizeof(struct disknode));
-	dn->didx = 1;
-	dn->klen = klen;
-	dn->dlen = dlen;
-	dn->offset = store_ds_offset;
-	memcpy(dn->magic, store_log_magic, 4);
-	memcpy(dn->state, store_state, SHA_DIGEST_LENGTH);
-
-	p = buf + sizeof(*dn);
-	memcpy(p, key, dn->klen);
-	if (dlen > 0)
-		memcpy(p + dn->klen, d, dlen);
-
-	SHA_Init(&sctx);
-	SHA_Update(&sctx, buf, len);
-	SHA_Final(dn->hash, &sctx);
-
-	cyon_atomic_write(dfd, buf, len, NULL);
-	store_ds_offset += len;
-	pthread_mutex_unlock(&disk_lock);
-
-	disk_modified = 1;
-	dn = cyon_malloc(sizeof(struct disknode));
-	memcpy(dn, buf, sizeof(struct disknode));
-	cyon_mem_free(buf);
-
-	return (dn);
-}
-
-static int
-cyon_diskstore_read(struct disknode *dn, u_int8_t **out, u_int32_t *len)
-{
-	SHA_CTX			sctx;
-	u_int32_t		blen;
-	struct disknode		*dnode;
-	u_int8_t		*buf, hash[SHA_DIGEST_LENGTH];
-
-	blen = sizeof(struct disknode) + dn->klen + dn->dlen;
-	buf = cyon_malloc(blen);
-
-	pthread_mutex_lock(&disk_lock);
-	if (lseek(dfd, dn->offset, SEEK_SET) == -1) {
-		pthread_mutex_unlock(&disk_lock);
-
-		if (replaying_log)
-			return (CYON_RESULT_ERROR);
-
-		cyon_readonly_mode = 1;
-		cyon_log(LOG_NOTICE,
-		    "bad read on on disk data @ %ld: lseek() offset %s",
-		    dn->offset, errno_s);
-		return (CYON_RESULT_ERROR);
-	}
-
-	if (!cyon_atomic_read(dfd, buf, blen, NULL, 1)) {
-		pthread_mutex_unlock(&disk_lock);
-		if (store_ds_offset != 0 && !replaying_log) {
-			cyon_readonly_mode = 1;
-			cyon_log(LOG_NOTICE,
-			    "bad read on on disk data @ %ld", dn->offset);
-		}
-		return (CYON_RESULT_ERROR);
-	}
-
-	if (lseek(dfd, store_ds_offset, SEEK_SET) == -1) {
-		pthread_mutex_unlock(&disk_lock);
-		cyon_readonly_mode = 1;
-		cyon_log(LOG_NOTICE,
-		    "bad read on disk data @ %ld: lseek() end %s",
-		    dn->offset, errno_s);
-		return (CYON_RESULT_ERROR);
-	}
-
-	pthread_mutex_unlock(&disk_lock);
-
-	dnode = (struct disknode *)buf;
-	memcpy(hash, dnode->hash, SHA_DIGEST_LENGTH);
-	memset(dnode->hash, 0, SHA_DIGEST_LENGTH);
-
-	SHA_Init(&sctx);
-	SHA_Update(&sctx, buf, blen);
-	SHA_Final(dnode->hash, &sctx);
-
-	if (memcmp(hash, dnode->hash, SHA_DIGEST_LENGTH)) {
-		cyon_log(LOG_NOTICE,
-		    "bad read on disk data @ %ld: hash mismatch", dn->offset);
-		return (CYON_RESULT_ERROR);
-	}
-
-	if (memcmp(dnode, dn, sizeof(struct disknode))) {
-		cyon_log(LOG_NOTICE,
-		    "bad read on disk data @ %ld: dnode != dn", dn->offset);
-		return (CYON_RESULT_ERROR);
-	}
-
-	*len = dnode->dlen;
-	*out = cyon_malloc(dnode->dlen);
-	memcpy(*out, buf + sizeof(*dnode) + dnode->klen, dnode->dlen);
-
-	cyon_mem_free(buf);
-	return (CYON_RESULT_OK);
-}
-
-static int
-cyon_diskstore_create(u_int8_t *key, u_int32_t klen,
-    u_int8_t *data, u_int32_t dlen)
-{
-	struct node_data	*nd;
-	struct node		*rp;
-	u_int32_t		len;
-	u_int8_t		*buf;
-	struct disknode		*dn, *ndn;
-
-	if ((rp = cyon_node_lookup(key, klen)) == NULL)
-		return (CYON_RESULT_ERROR);
-
-	if (!(rp->flags & NODE_FLAG_HASDATA))
-		return (CYON_RESULT_ERROR);
-
-	nd = (struct node_data *)rp->region;
-	if (nd->size != sizeof(struct disknode))
-		return (CYON_RESULT_ERROR);
-
-	dn = (struct disknode *)(rp->region + sizeof(struct node_data));
-	if (!cyon_diskstore_read(dn, &buf, &len)) {
-		ndn = cyon_diskstore_write(key, klen, data, dlen);
-
-		if (!cyon_readonly_mode) {
-			memcpy(dn, ndn, sizeof(struct disknode));
-			cyon_log(LOG_NOTICE, "recreated disk data for %.*s",
-			    key, klen);
-		} else {
-			if (dn->offset != ndn->offset) {
-				cyon_log(LOG_NOTICE,
-				    "dn->offset != ndn->offset (%ld, %ld)",
-				    dn->offset, ndn->offset);
-				store_errors++;
-			}
-		}
-
-		cyon_mem_free(ndn);
-	}
-
-	return (CYON_RESULT_OK);
 }

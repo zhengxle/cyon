@@ -47,7 +47,6 @@ static struct {
 } use_options[] = {
 	{ 'a',	NULL,		"Sync to disk after each write op (slow)" },
 	{ 'b',	"ip",		"Bind to the given IP address" },
-	{ 'd',	NULL,		"Runs Cyon in disk store mode" },
 	{ 'f',	NULL,		"Runs cyon in foreground mode" },
 	{ 'i',	NULL,		"Idle timeout for connections" },
 	{ 'l',	NULL,		"Retain store log files" },
@@ -99,18 +98,14 @@ main(int argc, char *argv[])
 	storepath = NULL;
 	unix_sockpath = NULL;
 	store_retain_logs = 0;
-	store_mode = CYON_MEM_STORE;
 
-	while ((ch = getopt(argc, argv, "ab:dfi:lnp:r:s:t:u:w:xz")) != -1) {
+	while ((ch = getopt(argc, argv, "ab:fi:lnp:r:s:t:u:w:xz")) != -1) {
 		switch (ch) {
 		case 'a':
 			store_always_sync = 1;
 			break;
 		case 'b':
 			ip = optarg;
-			break;
-		case 'd':
-			store_mode = CYON_DISK_STORE;
 			break;
 		case 'f':
 			foreground = 1;
@@ -171,9 +166,6 @@ main(int argc, char *argv[])
 		    "Please set storepath (-r) and storename (-s)\n");
 		usage();
 	}
-
-	if (store_mode == CYON_DISK_STORE && store_nopersist)
-		fatal("Cannot use -n with -d");
 
 	if (ip != NULL && argc != 2)
 		usage();
@@ -268,9 +260,7 @@ main(int argc, char *argv[])
 
 			cyon_store_lock(1);
 			last_store_flush = now;
-			cyon_store_flush(CYON_STOREFLUSH_LOG);
-			if (store_mode == CYON_DISK_STORE)
-				cyon_store_flush(CYON_STOREFLUSH_DISK);
+			cyon_store_flush();
 			cyon_store_unlock();
 		}
 

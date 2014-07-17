@@ -82,7 +82,7 @@ struct cyon_stats {
 
 #define CYON_DEFAULT_PID	"/tmp/cyon.pid"
 
-#define DEBUG		1
+//#define DEBUG		1
 
 #if defined(DEBUG)
 #define cyon_debug(fmt, ...)		\
@@ -91,15 +91,7 @@ struct cyon_stats {
 #define cyon_debug(fmt, ...)
 #endif
 
-#define CYON_OP_DISK_DATA	150	/* Not an actual network op */
-
 #define CYON_KEY_MAX			(USHRT_MAX - 1)
-
-#define CYON_MEM_STORE			0
-#define CYON_DISK_STORE			1
-
-#define CYON_STOREFLUSH_LOG		0
-#define CYON_STOREFLUSH_DISK		1
 
 #define CYON_NO_CHECKSUM		0
 #define CYON_ADD_CHECKSUM		1
@@ -264,7 +256,6 @@ extern u_int16_t		thread_count;
 extern pthread_mutex_t		store_write_lock;
 extern u_int64_t		last_store_write;
 extern u_char			*store_passphrase;
-extern u_int8_t			store_mode;
 extern u_int8_t			store_retain_logs;
 extern u_int8_t			store_nopersist;
 extern u_int8_t			server_started;
@@ -277,7 +268,7 @@ extern u_int8_t			store_state[SHA_DIGEST_LENGTH];
 u_int64_t	cyon_time_ms(void);
 u_int64_t	cyon_time_us(void);
 void		cyon_log_init(void);
-void		cyon_store_flush(int);
+void		cyon_store_flush(void);
 void		cyon_storelog_reopen(int);
 void		cyon_storewrite_start(void);
 int		cyon_storelog_replay(char *, int);
