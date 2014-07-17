@@ -20,7 +20,6 @@
 
 #include <openssl/sha.h>
 
-#include <err.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -55,15 +54,15 @@ struct node {
 	u_int8_t	rbase;
 	u_int8_t	rtop;
 	u_int8_t	flags;
-} __attribute__((__packed__));
+};
 
 struct node_data {
 	u_int32_t	size;
-} __attribute__((__packed__));
+};
 
 struct store_header {
 	u_int8_t	flags;
-} __attribute__((__packed__));
+};
 
 static const u_int8_t	store_log_magic[] = { 0x43, 0x59, 0x4F, 0x4E };
 
@@ -75,7 +74,7 @@ struct store_log {
 	u_int32_t	klen;
 	u_int32_t	dlen;
 	u_int32_t	flags;
-} __attribute__((__packed__));
+};
 
 static void		cyon_store_map(void);
 static void		cyon_storelog_replay_all(void);
@@ -139,14 +138,14 @@ cyon_store_init(void)
 		    "store loaded from disk with %ld keys", key_count);
 	}
 
-	if (!store_nopersist && !cyon_readonly_mode)
-		cyon_storelog_reopen(0);
-
 	if (store_errors) {
 		cyon_log(LOG_ERR, "INCONSISTENCIES IN STORE LOG/DATA FILE");
 		cyon_log(LOG_ERR, "THESE MUST BE REPAIRED. FORCING READONLY");
 		cyon_readonly_mode = 1;
 	}
+
+	if (!store_nopersist && !cyon_readonly_mode)
+		cyon_storelog_reopen(0);
 
 	if (cyon_readonly_mode)
 		cyon_log(LOG_NOTICE, "Cyon is in read-only mode");
@@ -468,6 +467,75 @@ cyon_store_flush(void)
 	}
 
 	log_modified = 0;
+}
+
+int
+cyon_store_aput(u_int8_t *key, u_int32_t klen, u_int8_t *data,
+    u_int32_t dlen, u_int8_t *err)
+{
+	struct node		*p;
+	struct node_data	*nd;
+	struct store_array	*ar;
+	u_int8_t		*old, *rdata;
+	u_int32_t		nlen, alen, olen, rlen, off, elm;
+
+	*err = CYON_ERROR_UNKNOWN;
+
+	if (!replaying_log && cyon_readonly_mode) {
+		*err = CYON_ERROR_READONLY_MODE;
+		return (CYON_RESULT_ERROR);
+	}
+
+	if ((p = cyon_node_lookup(key, klen)) == NULL) {
+		*err = CYON_ERROR_ENOENT;
+		return (CYON_RESULT_ERROR);
+	}
+
+	if (!(p->flags & NODE_FLAG_HASDATA)) {
+		*err = CYON_ERROR_ENOENT;
+		return (CYON_RESULT_ERROR);
+	}
+
+	rdata = p->region + sizeof(struct node_data);
+	ar = (struct store_array *)rdata;
+	if (dlen != ar->elen) {
+		*err = CYON_ERROR_INVALID_ARRAY_LEN;
+		return (CYON_RESULT_ERROR);
+	}
+
+	if (!replaying_log && !store_nopersist)
+		cyon_storelog_write(CYON_OP_APUT, key, klen, data, dlen, 0);
+
+	if (ar->count >= ar->elm) {
+		old = p->region;
+		if (p->rbase == 0 && p->rtop == 0) {
+			rlen = 0;
+		} else {
+			NODE_REGION_RANGE(rlen, p);
+		}
+
+		elm = (ar->elm / 10) + 1;
+		ar->elm += elm;
+
+		nd = (struct node_data *)p->region;
+		alen = sizeof(struct node_data) + nd->size +
+		    rlen + (elm * ar->elen);
+
+		p->region = cyon_malloc(alen);
+		memcpy(p->region, old, alen - (elm * ar->elen));
+		cyon_mem_free(old);
+
+		nd = (struct node_data *)p->region;
+		nd->size = alen - sizeof(struct node_data) - rlen;
+	}
+
+	rdata = p->region + sizeof(struct node_data);
+	ar = (struct store_array *)rdata;
+
+	off = (ar->count++ * ar->elen) + sizeof(struct store_array);
+	memcpy(rdata + off, data, dlen);
+
+	return (CYON_RESULT_OK);
 }
 
 void
@@ -826,9 +894,16 @@ cyon_storelog_replay(char *state, int when)
 					fatal("replay failed at this stage?");
 			}
 			break;
+		case CYON_OP_APUT:
+			if (!cyon_store_aput(key,
+			    slog.klen, data, slog.dlen, &err)) {
+				if (when != CYON_REPLAY_REQUEST)
+					fatal("replay failed at this stage?");
+			}
+			break;
 		default:
 			store_errors++;
-			printf("unknown log operation %d", slog.op);
+			printf("unknown log operation %d\n", slog.op);
 			break;
 		}
 	}
@@ -993,7 +1068,8 @@ cyon_storelog_replay_all(void)
 
 	for (;;) {
 		cyon_sha_hex(store_state, &hex);
-		if (!cyon_storelog_replay(hex, CYON_REPLAY_STARTUP)) {
+		if (!cyon_storelog_replay(hex, CYON_REPLAY_STARTUP) ||
+		    !store_retain_logs) {
 			cyon_mem_free(hex);
 			break;
 		}

@@ -336,6 +336,9 @@ int		cyon_store_get(u_int8_t *, u_int32_t, u_int8_t **,
 int		cyon_store_replace(u_int8_t *, u_int32_t,
 		    u_int8_t *, u_int32_t, u_int8_t *);
 
+int		cyon_store_aput(u_int8_t *, u_int32_t, u_int8_t *,
+		    u_int32_t, u_int8_t *);
+
 void		*pool_get(struct pool *);
 void		pool_put(struct pool *, void *);
 void		pool_init(struct pool *, char *, u_int32_t, u_int32_t);

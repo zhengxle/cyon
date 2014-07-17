@@ -455,49 +455,17 @@ cyon_connection_recv_acreate(struct netbuf *nb)
 static int
 cyon_connection_recv_aput(struct netbuf *nb)
 {
-	struct store_array	*ar;
 	struct cyon_op		ret;
-	u_int8_t		*key, *data, *p, *old;
-	u_int32_t		klen, dlen, plen, off;
+	u_int32_t		klen, dlen;
+	u_int8_t		*key, *data;
 	struct connection	*c = (struct connection *)nb->owner;
 
 	if (!connection_extract_data(nb, &klen, &dlen, &key, &data))
 		return (CYON_RESULT_ERROR);
 
-	old = NULL;
-
 	cyon_store_lock(1);
-	if (cyon_store_get(key, klen, &p, &plen, &(ret.error))) {
-		ar = (struct store_array *)p;
-		if (dlen != ar->elen) {
-			ret.op = CYON_OP_RESULT_ERROR;
-			ret.error = CYON_ERROR_INVALID_ARRAY_LEN;
-		} else {
-			if (ar->count >= ar->elm) {
-				/*
-				 * We do not have to free old. It will
-				 * be freed inside cyon_store_replace().
-				 */
-				old = p;
-				p = cyon_malloc(plen + ar->elen);
-
-				memcpy(p, old, plen);
-				ar = (struct store_array *)p;
-				plen += ar->elen;
-				ar->elm++;
-			}
-
-			off = (ar->count++ * ar->elen);
-			off += sizeof(struct store_array);
-			memcpy(p + off, data, dlen);
-
-			if (!cyon_store_replace(key, klen, p,
-			    plen, &(ret.error))) {
-				ret.op = CYON_OP_RESULT_ERROR;
-			} else {
-				ret.op = CYON_OP_RESULT_OK;
-			}
-		}
+	if (cyon_store_aput(key, klen, data, dlen, &(ret.error))) {
+		ret.op = CYON_OP_RESULT_OK;
 	} else {
 		ret.op = CYON_OP_RESULT_ERROR;
 	}
