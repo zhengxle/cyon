@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Joris Vink <joris@coders.se>
+ * Copyright (c) 2013-2014 Joris Vink <joris@coders.se>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -42,7 +42,7 @@ void		fatal(const char *, ...);
 void		cyon_write(void *, u_int32_t);
 void		cyon_read(void *, u_int32_t);
 
-int		cyon_del(u_int8_t *, u_int32_t);
+int		cyon_del(u_int8_t, u_int8_t *, u_int32_t, u_int32_t);
 int		cyon_get(u_int8_t, u_int8_t *, u_int32_t, u_int8_t **,
 		    u_int32_t *, u_int32_t, u_int32_t);
 int		cyon_upload(u_int8_t, u_int8_t *,
@@ -56,6 +56,7 @@ void		cyon_cli_write(u_int8_t, char **);
 void		cyon_cli_setauth(u_int8_t, char **);
 void		cyon_cli_replay(u_int8_t, char **);
 void		cyon_cli_acreate(u_int8_t, char **);
+void		cyon_cli_adel(u_int8_t, char **);
 void		cyon_cli_stress(u_int8_t, char **);
 
 int		cfd = -1;
@@ -79,6 +80,7 @@ struct {
 	{ "acreate",		cyon_cli_acreate },
 	{ "aput",		cyon_cli_upload },
 	{ "aget",		cyon_cli_get },
+	{ "adel",		cyon_cli_adel },
 	{ "stress",		cyon_cli_stress },
 	{ NULL,		NULL },
 };
@@ -363,8 +365,8 @@ cyon_get(u_int8_t type, u_int8_t *key, u_int32_t klen, u_int8_t **out,
 	}
 
 	memcpy(&p[off], key, klen);
-
 	cyon_write(p, plen + sizeof(struct cyon_op));
+	free(p);
 
 	*dlen = 0;
 	*out = NULL;
@@ -384,23 +386,46 @@ cyon_get(u_int8_t type, u_int8_t *key, u_int32_t klen, u_int8_t **out,
 }
 
 int
-cyon_del(u_int8_t *key, u_int32_t klen)
+cyon_del(u_int8_t type, u_int8_t *key, u_int32_t klen, u_int32_t offset)
 {
-	struct cyon_op		op;
+	u_int8_t		*p;
+	struct cyon_op		*op, ret;
+	u_int32_t		plen, off;
 
-	op.op = CYON_OP_DEL;
-	net_write32((u_int8_t *)&(op.length), klen);
+	if (type == CYON_OP_ADEL) {
+		plen = klen + (sizeof(u_int32_t) * 3);
+	} else {
+		plen = klen;
+	}
 
-	cyon_write(&op, sizeof(op));
-	cyon_write(key, klen);
+	if ((p = malloc(plen + sizeof(struct cyon_op))) == NULL)
+		fatal("malloc(): %s", errno_s);
 
-	memset(&op, 0, sizeof(op));
-	cyon_read(&op, sizeof(op));
+	op = (struct cyon_op *)p;
+	op->op = type;
+	net_write32((u_int8_t *)&(op->length), plen);
 
-	if (op.op != CYON_OP_RESULT_OK && op.op != CYON_OP_RESULT_ERROR)
-		fatal("Unexpected result from server: %d", op.op);
+	off = sizeof(struct cyon_op);
+	if (type == CYON_OP_ADEL) {
+		net_write32(&p[off], klen);
+		net_write32(&p[off + 4], sizeof(offset));
+		off += 8;
+	}
 
-	return (op.op == CYON_OP_RESULT_OK);
+	memcpy(&p[off], key, klen);
+	if (type == CYON_OP_ADEL)
+		net_write32(&p[off + klen], offset);
+
+	cyon_write(p, plen + sizeof(struct cyon_op));
+	free(p);
+
+	memset(&ret, 0, sizeof(ret));
+	cyon_read(&ret, sizeof(ret));
+
+	if (ret.op != CYON_OP_RESULT_OK && ret.op != CYON_OP_RESULT_ERROR)
+		fatal("Unexpected result from server: %d", ret.op);
+
+	return (ret.op == CYON_OP_RESULT_OK);
 }
 
 void
@@ -499,7 +524,7 @@ cyon_cli_del(u_int8_t argc, char **argv)
 	if (argc != 2)
 		fatal("del [key]");
 
-	if (cyon_del((u_int8_t *)argv[1], strlen(argv[1])))
+	if (cyon_del(CYON_OP_DEL, (u_int8_t *)argv[1], strlen(argv[1]), 0))
 		printf("%s was successfully deleted\n", argv[1]);
 	else
 		fatal("Error occured while deleting %s", argv[1]);
@@ -623,9 +648,10 @@ cyon_cli_acreate(u_int8_t argc, char **argv)
 	if (argc != 4)
 		fatal("Usage: acreate [key] [elm] [len]");
 
-	klen = strlen(argv[1]);
+	/* XXX atoi's */
 	elm = atoi(argv[2]);
 	elen = atoi(argv[3]);
+	klen = strlen(argv[1]);
 
 	len = klen + (sizeof(u_int32_t) * 3) + sizeof(struct cyon_op);
 	if ((p = malloc(len)) == NULL)
@@ -647,6 +673,26 @@ cyon_cli_acreate(u_int8_t argc, char **argv)
 	memset(&ret, 0, sizeof(ret));
 	cyon_read(&ret, sizeof(struct cyon_op));
 	printf("done\n");
+}
+
+void
+cyon_cli_adel(u_int8_t argc, char **argv)
+{
+	u_int32_t	offset;
+
+	if (argc != 3)
+		fatal("Usage: adel [key] [offset]");
+
+	/* XXX atoi's */
+	offset = atoi(argv[2]);
+
+	if (!cyon_del(CYON_OP_ADEL, (u_int8_t *)argv[1],
+	    strlen(argv[1]), offset)) {
+		printf("Failed to delete object @ %d in array %s\n",
+		    offset, argv[1]);
+	} else {
+		printf("Object @ %d in array %s deleted\n", offset, argv[1]);
+	}
 }
 
 void

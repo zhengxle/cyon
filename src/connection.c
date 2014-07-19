@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Joris Vink <joris@coders.se>
+ * Copyright (c) 2013-2014 Joris Vink <joris@coders.se>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -374,6 +374,7 @@ cyon_connection_recv_op(struct netbuf *nb)
 		r = net_recv_expand(c, nb, len, cyon_connection_recv_aget);
 		break;
 	case CYON_OP_ADEL:
+		r = net_recv_expand(c, nb, len, cyon_connection_recv_adel);
 		break;
 	case CYON_OP_ACREATE:
 		r = net_recv_expand(c, nb, len, cyon_connection_recv_acreate);
@@ -465,6 +466,36 @@ cyon_connection_recv_aput(struct netbuf *nb)
 
 	cyon_store_lock(1);
 	if (cyon_store_aput(key, klen, data, dlen, &(ret.error))) {
+		ret.op = CYON_OP_RESULT_OK;
+	} else {
+		ret.op = CYON_OP_RESULT_ERROR;
+	}
+
+	cyon_store_unlock();
+
+	ret.length = 0;
+	net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);
+	return (net_send_flush(c));
+}
+
+static int
+cyon_connection_recv_adel(struct netbuf *nb)
+{
+	struct cyon_op		ret;
+	u_int8_t		*key, *data;
+	u_int32_t		klen, dlen, offset;
+	struct connection	*c = (struct connection *)nb->owner;
+
+	if (!connection_extract_data(nb, &klen, &dlen, &key, &data))
+		return (CYON_RESULT_ERROR);
+
+	if (dlen != sizeof(u_int32_t))
+		return (CYON_RESULT_ERROR);
+
+	offset = net_read32(data);
+
+	cyon_store_lock(1);
+	if (cyon_store_adel(key, klen, offset, &(ret.error))) {
 		ret.op = CYON_OP_RESULT_OK;
 	} else {
 		ret.op = CYON_OP_RESULT_ERROR;

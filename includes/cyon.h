@@ -82,8 +82,6 @@ struct cyon_stats {
 
 #define CYON_DEFAULT_PID	"/tmp/cyon.pid"
 
-//#define DEBUG		1
-
 #if defined(DEBUG)
 #define cyon_debug(fmt, ...)		\
 	cyon_debug_internal(__FILE__, __LINE__, fmt, ##__VA_ARGS__)
@@ -338,6 +336,7 @@ int		cyon_store_replace(u_int8_t *, u_int32_t,
 
 int		cyon_store_aput(u_int8_t *, u_int32_t, u_int8_t *,
 		    u_int32_t, u_int8_t *);
+int		cyon_store_adel(u_int8_t *, u_int32_t, u_int32_t, u_int8_t *);
 
 void		*pool_get(struct pool *);
 void		pool_put(struct pool *, void *);

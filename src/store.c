@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 Joris Vink <joris@coders.se>
+ * Copyright (c) 2013-2014 Joris Vink <joris@coders.se>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -446,29 +446,6 @@ cyon_store_put(u_int8_t *key, u_int32_t len, u_int8_t *data,
 	return (CYON_RESULT_OK);
 }
 
-void
-cyon_store_flush(void)
-{
-	int		ret;
-
-	if (cyon_readonly_mode || store_nopersist)
-		return;
-
-	if (log_modified == 0)
-		return;
-
-	for (;;) {
-		ret = fsync(lfd);
-		if (ret == -1 && errno == EINTR)
-			continue;
-		if (ret == -1)
-			fatal("store sync failed: %s", errno_s);
-		break;
-	}
-
-	log_modified = 0;
-}
-
 int
 cyon_store_aput(u_int8_t *key, u_int32_t klen, u_int8_t *data,
     u_int32_t dlen, u_int8_t *err)
@@ -477,7 +454,7 @@ cyon_store_aput(u_int8_t *key, u_int32_t klen, u_int8_t *data,
 	struct node_data	*nd;
 	struct store_array	*ar;
 	u_int8_t		*old, *rdata;
-	u_int32_t		nlen, alen, olen, rlen, off, elm;
+	u_int32_t		alen, rlen, off, elm;
 
 	*err = CYON_ERROR_UNKNOWN;
 
@@ -536,6 +513,77 @@ cyon_store_aput(u_int8_t *key, u_int32_t klen, u_int8_t *data,
 	memcpy(rdata + off, data, dlen);
 
 	return (CYON_RESULT_OK);
+}
+
+int
+cyon_store_adel(u_int8_t *key, u_int32_t klen, u_int32_t offset,
+    u_int8_t *err)
+{
+	struct node		*p;
+	struct store_array	*ar;
+	u_int8_t		*data, *next, *elm;
+	u_int32_t		elms;
+
+	*err = CYON_ERROR_UNKNOWN;
+
+	if (!replaying_log && cyon_readonly_mode) {
+		*err = CYON_ERROR_READONLY_MODE;
+		return (CYON_RESULT_ERROR);
+	}
+
+	if ((p = cyon_node_lookup(key, klen)) == NULL) {
+		*err = CYON_ERROR_ENOENT;
+		return (CYON_RESULT_ERROR);
+	}
+
+	if (!(p->flags & NODE_FLAG_HASDATA)) {
+		*err = CYON_ERROR_ENOENT;
+		return (CYON_RESULT_ERROR);
+	}
+
+	ar = (struct store_array *)(p->region + sizeof(struct node_data));
+	if ((int)offset < 0 || offset >= ar->count) {
+		*err = CYON_ERROR_INVALID_ARRAY_LEN;
+		return (CYON_RESULT_ERROR);
+	}
+
+	data = (u_int8_t *)ar + sizeof(struct store_array);
+
+	elms = ar->count - 1;
+	elm = data + (offset * ar->elen);
+	if (offset < elms) {
+		next = data + ((offset + 1) * ar->elen);
+		memcpy(elm, next, ((elms - offset) * ar->elen));
+	} else {
+		memset(elm, 0, ar->elen);
+	}
+
+	ar->count--;
+
+	return (CYON_RESULT_OK);
+}
+
+void
+cyon_store_flush(void)
+{
+	int		ret;
+
+	if (cyon_readonly_mode || store_nopersist)
+		return;
+
+	if (log_modified == 0)
+		return;
+
+	for (;;) {
+		ret = fsync(lfd);
+		if (ret == -1 && errno == EINTR)
+			continue;
+		if (ret == -1)
+			fatal("store sync failed: %s", errno_s);
+		break;
+	}
+
+	log_modified = 0;
 }
 
 void
