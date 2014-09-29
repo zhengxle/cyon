@@ -615,7 +615,6 @@ cyon_connection_recv_get(struct netbuf *nb)
 	key = nb->buf + sizeof(struct cyon_op);
 
 	if ((int)klen <= 0) {
-		cyon_debug("klen: %d", klen);
 		return (CYON_RESULT_ERROR);
 	}
 
@@ -650,10 +649,8 @@ cyon_connection_recv_del(struct netbuf *nb)
 	klen = net_read32((u_int8_t *)&(op->length));
 	key = nb->buf + sizeof(struct cyon_op);
 
-	if ((int)klen <= 0) {
-		cyon_debug("klen: %d", klen);
+	if ((int)klen <= 0)
 		return (CYON_RESULT_ERROR);
-	}
 
 	cyon_store_lock(1);
 
