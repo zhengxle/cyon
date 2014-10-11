@@ -60,6 +60,8 @@
 #define CYON_ERROR_KEYLEN_INVALID	4
 #define CYON_ERROR_INVALID_ARRAY_LEN	5
 #define CYON_ERROR_INVALID_OFFSET	6
+#define CYON_ERROR_ARRAY_ELM_TOO_BIG	7
+#define CYON_ERROR_ARRAY_ELEN_TOO_BIG	8
 
 struct cyon_op {
 	u_int8_t		op;
@@ -96,6 +98,9 @@ struct cyon_stats {
 
 #define CYON_REPLAY_STARTUP		0
 #define CYON_REPLAY_REQUEST		1
+
+#define CYON_ARRAY_ELM_MAX	255
+#define CYON_ARRAY_ELEN_MAX	65535
 
 #define CYON_STORE_WRITE_NOFORK		0
 #define CYON_STORE_WRITE_FORK		1
@@ -235,9 +240,9 @@ struct thread {
 };
 
 struct store_array {
-	u_int32_t			elm;
-	u_int32_t			elen;
-	u_int32_t			count;
+	u_int16_t			elen;
+	u_int8_t			elm;
+	u_int8_t			count;
 };
 
 extern struct listener		server;

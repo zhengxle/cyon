@@ -428,6 +428,22 @@ cyon_connection_recv_acreate(struct netbuf *nb)
 	if ((int)klen <= 0 || (int)elm <= 0 || (int)elen <= 0)
 		return (CYON_RESULT_ERROR);
 
+	if (elm > CYON_ARRAY_ELM_MAX) {
+		ret.length = 0;
+		ret.op = CYON_OP_RESULT_ERROR;
+		ret.error = CYON_ERROR_ARRAY_ELM_TOO_BIG;
+		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);
+		return (net_send_flush(c));
+	}
+
+	if (elen > CYON_ARRAY_ELEN_MAX) {
+		ret.length = 0;
+		ret.op = CYON_OP_RESULT_ERROR;
+		ret.error = CYON_ERROR_ARRAY_ELEN_TOO_BIG;
+		net_send_queue(c, (u_int8_t *)&ret, sizeof(ret), 0);
+		return (net_send_flush(c));
+	}
+
 	key = nb->buf + sizeof(struct cyon_op) + (sizeof(u_int32_t) * 3);
 	dlen = sizeof(struct store_array) + (elm * elen);
 	data = cyon_malloc(dlen);

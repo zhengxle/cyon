@@ -646,7 +646,7 @@ cyon_cli_acreate(u_int8_t argc, char **argv)
 	u_int32_t		len, off, klen, elm, elen;
 
 	if (argc != 4)
-		fatal("Usage: acreate [key] [elm] [len]");
+		fatal("Usage: acreate [key] [elm (max 255)] [len (max 65535)]");
 
 	/* XXX atoi's */
 	elm = atoi(argv[2]);
@@ -672,7 +672,7 @@ cyon_cli_acreate(u_int8_t argc, char **argv)
 
 	memset(&ret, 0, sizeof(ret));
 	cyon_read(&ret, sizeof(struct cyon_op));
-	printf("done\n");
+	printf("done with result: %d (%d)\n", ret.op, ret.error);
 }
 
 void

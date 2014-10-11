@@ -454,7 +454,7 @@ cyon_store_aput(u_int8_t *key, u_int32_t klen, u_int8_t *data,
 	struct node_data	*nd;
 	struct store_array	*ar;
 	u_int8_t		*old, *rdata;
-	u_int32_t		alen, rlen, off, elm;
+	u_int32_t		alen, rlen, off, elm, tmp;
 
 	*err = CYON_ERROR_UNKNOWN;
 
@@ -492,8 +492,13 @@ cyon_store_aput(u_int8_t *key, u_int32_t klen, u_int8_t *data,
 		}
 
 		elm = (ar->elm / 10) + 1;
-		ar->elm += elm;
+		tmp = ar->elm + elm;
+		if (tmp > CYON_ARRAY_ELM_MAX) {
+			*err = CYON_ERROR_ARRAY_ELM_TOO_BIG;
+			return (CYON_RESULT_ERROR);
+		}
 
+		ar->elm = tmp;
 		nd = (struct node_data *)p->region;
 		alen = sizeof(struct node_data) + nd->size +
 		    rlen + (elm * ar->elen);
