@@ -120,12 +120,12 @@ cyon_connection_accept(struct listener *l)
 		    NULL, cyon_connection_recv_op);
 	}
 
+	if (store_passphrase == NULL)
+		c->flags |= CONN_AUTHENTICATED;
+
 	cyon_connection_start_idletimer(c);
 	cyon_platform_event_schedule(&(t->nctx), c->fd,
 	    EPOLLIN | EPOLLOUT | EPOLLET, 0, c);
-
-	if (store_passphrase == NULL)
-		c->flags |= CONN_AUTHENTICATED;
 
 	return (CYON_RESULT_OK);
 }
