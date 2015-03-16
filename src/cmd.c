@@ -44,7 +44,7 @@ void		cyon_read(void *, u_int32_t);
 
 int		cyon_del(u_int8_t, u_int8_t *, u_int32_t, u_int32_t);
 int		cyon_get(u_int8_t, u_int8_t *, u_int32_t, u_int8_t **,
-		    u_int32_t *, u_int32_t, u_int32_t);
+		    u_int32_t *);
 int		cyon_upload(u_int8_t, u_int8_t *,
 		    u_int32_t, u_int8_t *, u_int32_t);
 
@@ -55,8 +55,6 @@ void		cyon_cli_stats(u_int8_t, char **);
 void		cyon_cli_write(u_int8_t, char **);
 void		cyon_cli_setauth(u_int8_t, char **);
 void		cyon_cli_replay(u_int8_t, char **);
-void		cyon_cli_acreate(u_int8_t, char **);
-void		cyon_cli_adel(u_int8_t, char **);
 void		cyon_cli_stress(u_int8_t, char **);
 
 int		cfd = -1;
@@ -77,10 +75,6 @@ struct {
 	{ "set-auth",		cyon_cli_setauth },
 	{ "replace",		cyon_cli_upload },
 	{ "replay",		cyon_cli_replay },
-	{ "acreate",		cyon_cli_acreate },
-	{ "aput",		cyon_cli_upload },
-	{ "aget",		cyon_cli_get },
-	{ "adel",		cyon_cli_adel },
 	{ "stress",		cyon_cli_stress },
 	{ NULL,		NULL },
 };
@@ -337,18 +331,13 @@ cyon_upload(u_int8_t id, u_int8_t *key, u_int32_t klen,
 
 int
 cyon_get(u_int8_t type, u_int8_t *key, u_int32_t klen, u_int8_t **out,
-    u_int32_t *dlen, u_int32_t start, u_int32_t end)
+    u_int32_t *dlen) 
 {
 	u_int8_t		*p;
 	struct cyon_op		*op, ret;
 	u_int32_t		plen, off;
 
-	if (type == CYON_OP_AGET) {
-		plen = klen + (sizeof(u_int32_t) * 3);
-	} else {
-		plen = klen;
-	}
-
+	plen = klen;
 	if ((p = malloc(plen + sizeof(struct cyon_op))) == NULL)
 		fatal("malloc(): %s", errno_s);
 
@@ -357,13 +346,6 @@ cyon_get(u_int8_t type, u_int8_t *key, u_int32_t klen, u_int8_t **out,
 	net_write32((u_int8_t *)&(op->length), plen);
 
 	off = sizeof(struct cyon_op);
-	if (type == CYON_OP_AGET) {
-		net_write32(&p[off], klen);
-		net_write32(&p[off + 4], start);
-		net_write32(&p[off + 8], end);
-		off += 12;
-	}
-
 	memcpy(&p[off], key, klen);
 	cyon_write(p, plen + sizeof(struct cyon_op));
 	free(p);
@@ -392,12 +374,7 @@ cyon_del(u_int8_t type, u_int8_t *key, u_int32_t klen, u_int32_t offset)
 	struct cyon_op		*op, ret;
 	u_int32_t		plen, off;
 
-	if (type == CYON_OP_ADEL) {
-		plen = klen + (sizeof(u_int32_t) * 3);
-	} else {
-		plen = klen;
-	}
-
+	plen = klen;
 	if ((p = malloc(plen + sizeof(struct cyon_op))) == NULL)
 		fatal("malloc(): %s", errno_s);
 
@@ -406,15 +383,7 @@ cyon_del(u_int8_t type, u_int8_t *key, u_int32_t klen, u_int32_t offset)
 	net_write32((u_int8_t *)&(op->length), plen);
 
 	off = sizeof(struct cyon_op);
-	if (type == CYON_OP_ADEL) {
-		net_write32(&p[off], klen);
-		net_write32(&p[off + 4], sizeof(offset));
-		off += 8;
-	}
-
 	memcpy(&p[off], key, klen);
-	if (type == CYON_OP_ADEL)
-		net_write32(&p[off + klen], offset);
 
 	cyon_write(p, plen + sizeof(struct cyon_op));
 	free(p);
@@ -441,8 +410,6 @@ cyon_cli_upload(u_int8_t argc, char **argv)
 		id = CYON_OP_PUT;
 	} else if (!strcmp(argv[0], "replace")) {
 		id = CYON_OP_REPLACE;
-	} else if (!strcmp(argv[0], "aput")) {
-		id = CYON_OP_APUT;
 	} else {
 		fatal("invalid request: %s", argv[0]);
 	}
@@ -478,27 +445,13 @@ cyon_cli_get(u_int8_t argc, char **argv)
 {
 	ssize_t		r;
 	int		fd;
+	u_int32_t	dlen;
 	u_int8_t	*data, type;
-	u_int32_t	dlen, start, end;
 
-	if (!strcmp(argv[0], "aget")) {
-		if (argc != 5)
-			fatal("aget [key] [outfile] [start] [end]");
+	type = CYON_OP_GET;
 
-		type = CYON_OP_AGET;
-		end = atoi(argv[4]);
-		start = atoi(argv[3]);
-	} else {
-		if (argc != 3)
-			fatal("get [key] [outfile]");
-
-		end = 0;
-		start = 0;
-		type = CYON_OP_GET;
-	}
-
-	if (cyon_get(type, (u_int8_t *)argv[1], strlen(argv[1]),
-	    &data, &dlen, start, end)) {
+	if (cyon_get(type, (u_int8_t *)argv[1],
+	    strlen(argv[1]), &data, &dlen)) {
 		printf("Received %d bytes of data\n", dlen);
 
 		fd = open(argv[2], O_CREAT | O_TRUNC | O_WRONLY, 0700);
@@ -639,70 +592,15 @@ cyon_cli_replay(u_int8_t argc, char **argv)
 }
 
 void
-cyon_cli_acreate(u_int8_t argc, char **argv)
-{
-	u_int8_t		*p;
-	struct cyon_op		*op, ret;
-	u_int32_t		len, off, klen, elm, elen;
-
-	if (argc != 4)
-		fatal("Usage: acreate [key] [elm (max 255)] [len (max 65535)]");
-
-	/* XXX atoi's */
-	elm = atoi(argv[2]);
-	elen = atoi(argv[3]);
-	klen = strlen(argv[1]);
-
-	len = klen + (sizeof(u_int32_t) * 3) + sizeof(struct cyon_op);
-	if ((p = malloc(len)) == NULL)
-		fatal("malloc(): %s", errno_s);
-
-	op = (struct cyon_op *)p;
-	op->op = CYON_OP_ACREATE;
-	net_write32((u_int8_t *)&(op->length), len - sizeof(struct cyon_op));
-
-	off = sizeof(struct cyon_op);
-	net_write32(&p[off], strlen(argv[1]));
-	net_write32(&p[off + 4], elm);
-	net_write32(&p[off + 8], elen);
-	memcpy(&p[off + 12], argv[1], klen);
-
-	cyon_write(p, len);
-	free(p);
-
-	memset(&ret, 0, sizeof(ret));
-	cyon_read(&ret, sizeof(struct cyon_op));
-	printf("done with result: %d (%d)\n", ret.op, ret.error);
-}
-
-void
-cyon_cli_adel(u_int8_t argc, char **argv)
-{
-	u_int32_t	offset;
-
-	if (argc != 3)
-		fatal("Usage: adel [key] [offset]");
-
-	/* XXX atoi's */
-	offset = atoi(argv[2]);
-
-	if (!cyon_del(CYON_OP_ADEL, (u_int8_t *)argv[1],
-	    strlen(argv[1]), offset)) {
-		printf("Failed to delete object @ %d in array %s\n",
-		    offset, argv[1]);
-	} else {
-		printf("Object @ %d in array %s deleted\n", offset, argv[1]);
-	}
-}
-
-void
 cyon_cli_stress(u_int8_t argc, char **argv)
 {
 	int		i, kps;
 	char		key[17];
 	time_t		now, last;
 
-	last = 0;
+	time(&now);
+	last = now;
+
 	for (i = 0; i < 1000000; i++) {
 		time(&now);
 		if (now - last > 1) {

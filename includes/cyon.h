@@ -44,10 +44,6 @@
 #define CYON_OP_DEL		7
 #define CYON_OP_REPLACE		8
 #define CYON_OP_REPLAY		9
-#define CYON_OP_APUT		10
-#define CYON_OP_AGET		11
-#define CYON_OP_ADEL		12
-#define CYON_OP_ACREATE		13
 
 #define CYON_OP_RESULT_OK	200
 #define CYON_OP_RESULT_ERROR	201
@@ -239,12 +235,6 @@ struct thread {
 	pthread_mutex_t			lock;
 };
 
-struct store_array {
-	u_int16_t			elen;
-	u_int8_t			elm;
-	u_int8_t			count;
-};
-
 extern struct listener		server;
 extern pthread_key_t		thread;
 extern struct pool		nb_pool;
@@ -338,10 +328,6 @@ int		cyon_store_get(u_int8_t *, u_int32_t, u_int8_t **,
 		    u_int32_t *, u_int8_t *);
 int		cyon_store_replace(u_int8_t *, u_int32_t,
 		    u_int8_t *, u_int32_t, u_int8_t *);
-
-int		cyon_store_aput(u_int8_t *, u_int32_t, u_int8_t *,
-		    u_int32_t, u_int8_t *);
-int		cyon_store_adel(u_int8_t *, u_int32_t, u_int32_t, u_int8_t *);
 
 void		*pool_get(struct pool *);
 void		pool_put(struct pool *, void *);
