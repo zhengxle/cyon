@@ -66,7 +66,6 @@ struct cyon_op {
 };
 
 struct cyon_stats {
-	u_int64_t		meminuse;
 	u_int64_t		keycount;
 	u_int8_t		state[SHA_DIGEST_STRING_LEN];
 	u_int8_t		modified;
@@ -240,7 +239,6 @@ extern pthread_key_t		thread;
 extern struct pool		nb_pool;
 extern struct pool		op_pool;
 extern SSL_CTX			*ssl_ctx;
-extern u_int64_t		meminuse;
 extern u_int64_t		key_count;
 extern char			*storepath;
 extern char			*storename;
